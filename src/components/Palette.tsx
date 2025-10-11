@@ -5,7 +5,8 @@ import { useAppStore } from '@/store/store';
 
 
 export const Palette = () => {
-  const { addObject, isPaletteOpen } = useAppStore(state => ({ addObject: state.addObject, isPaletteOpen: state.isPaletteOpen }));
+  const addObject = useAppStore((state) => state.addObject);
+  const isPaletteOpen = useAppStore((state) => state.isPaletteOpen);
   const [diameter, setDiameter] = useState(100);
 
   if (!isPaletteOpen) return null;
