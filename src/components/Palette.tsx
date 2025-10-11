@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState }re from 'react';
+import React, { useState } from 'react';
 import { useAppStore } from '@/store/store';
 
 
