@@ -1,11 +1,13 @@
 'use client';
 
 import React, { useState } from 'react';
-import { useAppStore } from '@/store/store';
+// import { useAppStore } from '@/store/store'; // Commented out for diagnosis
 
 
 export const Palette = () => {
-  const { addObject, isPaletteOpen } = useAppStore(state => ({ addObject: state.addObject, isPaletteOpen: state.isPaletteOpen }));
+  // const { addObject, isPaletteOpen } = useAppStore(state => ({ addObject: state.addObject, isPaletteOpen: state.isPaletteOpen })); // Commented out for diagnosis
+  const addObject = (partType: string, options: Record<string, unknown>) => { console.log('addObject called', partType, options); }; // No-op for diagnosis
+  const isPaletteOpen = true; // Hardcoded for diagnosis
   const [diameter, setDiameter] = useState(100);
 
   if (!isPaletteOpen) return null;
