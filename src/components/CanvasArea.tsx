@@ -1,115 +1,151 @@
 'use client';
 
-import React, { useEffect, useRef, useCallback } from 'react';
-import { useAppStore } from '@/store/store';
-import { StraightDuct } from '@/lib/objects';
+import { DuctPart } from '@/lib/duct-objects';
+import { Camera, PaletteItemData } from '@/types';
+import React, { useRef, useEffect, useState, useCallback } from 'react';
 
-export const CanvasArea = () => {
-    const canvasRef = useRef<HTMLCanvasElement>(null);
-    const store = useAppStore();
+interface DuctCanvasProps {
+  objects: DuctPart[];
+  camera: Camera;
+  setCamera: React.Dispatch<React.SetStateAction<Camera>>;
+  onObjectMove: (id: number, x: number, y: number) => void;
+  onAddObject: (item: PaletteItemData, x: number, y: number) => void;
+  selectedObjectId: number | null;
+  onSelectObject: (id: number | null, clickPos?: {x: number, y: number}) => void;
+}
 
-    const getMousePos = useCallback((e: MouseEvent) => {
-        const canvas = canvasRef.current;
-        if (!canvas) return { x: 0, y: 0 };
-        const rect = canvas.getBoundingClientRect();
-        return { x: e.clientX - rect.left, y: e.clientY - rect.top };
-    }, []);
+interface DragInfo { isDragging: boolean; target: DuctPart | null; offsetX: number; offsetY: number; }
 
-    const screenToWorld = useCallback((screenPos: {x: number, y: number}) => {
-        return {
-            x: (screenPos.x - store.camera.x) / store.camera.zoom,
-            y: (screenPos.y - store.camera.y) / store.camera.zoom
-        };
-    }, [store.camera]);
+const DuctCanvas: React.FC<DuctCanvasProps> = ({ objects, camera, setCamera, onObjectMove, onAddObject, selectedObjectId, onSelectObject }) => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [isPanning, setIsPanning] = useState(false);
+  const [panStart, setPanStart] = useState({ x: 0, y: 0 });
+  const [dragInfo, setDragInfo] = useState<DragInfo>({ isDragging: false, target: null, offsetX: 0, offsetY: 0 });
 
-    // Drawing Effect
-    useEffect(() => {
-        const canvas = canvasRef.current;
-        if (!canvas || !canvas.parentElement) return;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const resizeCanvas = () => {
+      const parent = canvas.parentElement;
+      if (parent) { canvas.width = parent.clientWidth; canvas.height = parent.clientHeight; }
+    };
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+    return () => window.removeEventListener('resize', resizeCanvas);
+  }, []);
 
-        canvas.width = canvas.parentElement.clientWidth;
-        canvas.height = canvas.parentElement.clientHeight;
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const drawGrid = () => {
+      const gridSize = 50; ctx.strokeStyle = '#d1d5db'; ctx.lineWidth = 1 / camera.zoom;
+      const xStart = Math.floor((camera.x - (canvas.width / 2) / camera.zoom) / gridSize) * gridSize;
+      const xEnd = Math.ceil((camera.x + (canvas.width / 2) / camera.zoom) / gridSize) * gridSize;
+      const yStart = Math.floor((camera.y - (canvas.height / 2) / camera.zoom) / gridSize) * gridSize;
+      const yEnd = Math.ceil((camera.y + (canvas.height / 2) / camera.zoom) / gridSize) * gridSize;
+      ctx.beginPath();
+      for (let x = xStart; x <= xEnd; x += gridSize) { ctx.moveTo(x, yStart); ctx.lineTo(x, yEnd); }
+      for (let y = yStart; y <= yEnd; y += gridSize) { ctx.moveTo(xStart, y); ctx.lineTo(xEnd, y); } 
+      ctx.stroke();
+    };
+    const draw = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.save();
+      ctx.translate(canvas.width / 2, canvas.height / 2);
+      ctx.scale(camera.zoom, camera.zoom);
+      ctx.translate(-camera.x, -camera.y);
+      drawGrid();
+      if (Array.isArray(objects)) {
+        objects.forEach((obj) => obj.draw(ctx, camera));
+      }
+      ctx.restore();
+    };
+    draw();
+  }, [objects, camera]);
 
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.save();
-        ctx.translate(store.camera.x, store.camera.y);
-        ctx.scale(store.camera.zoom, store.camera.zoom);
+  const getWorldMousePos = (e: React.MouseEvent | React.DragEvent) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
+    const rect = canvas.getBoundingClientRect();
+    const screenX = e.clientX - rect.left;
+    const screenY = e.clientY - rect.top;
+    const worldX = (screenX - canvas.width / 2) / camera.zoom + camera.x;
+    const worldY = (screenY - canvas.height / 2) / camera.zoom + camera.y;
+    return { x: worldX, y: worldY };
+  };
 
-        store.objects.forEach(obj => {
-            ctx.fillStyle = '#1d4ed8';
-            ctx.strokeStyle = '#1e3a8a';
-            if (obj.type === 'StraightDuct') {
-                 const duct = obj as unknown as StraightDuct;
-                 ctx.fillRect(duct.x - duct.length / 2, duct.y - duct.diameter / 2, duct.length, duct.diameter);
-                 ctx.strokeRect(duct.x - duct.length / 2, duct.y - duct.diameter / 2, duct.length, duct.diameter);
-            }
-        });
-        ctx.restore();
-    }, [store.objects, store.camera]);
+  const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (e.button !== 0) return;
+    const worldPos = getWorldMousePos(e);
+    const targetObject = Array.isArray(objects) ? [...objects].reverse().find((obj) => obj.isPointInside(worldPos.x, worldPos.y)) : undefined;
+    if (targetObject) {
+      if (targetObject.id === selectedObjectId) {
+        onSelectObject(targetObject.id, { x: e.clientX, y: e.clientY });
+      } else {
+        onSelectObject(targetObject.id);
+      }
+      setDragInfo({ isDragging: true, target: targetObject, offsetX: worldPos.x - targetObject.x, offsetY: worldPos.y - targetObject.y });
+    } else {
+      onSelectObject(null);
+      setIsPanning(true);
+      setPanStart({ x: e.clientX, y: e.clientY });
+      e.currentTarget.style.cursor = 'grabbing';
+    }
+  };
 
-    // Mouse Event Handlers
-    useEffect(() => {
-        const canvas = canvasRef.current;
-        if (!canvas) return;
+  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (dragInfo.isDragging && dragInfo.target) {
+      const worldPos = getWorldMousePos(e);
+      onObjectMove(dragInfo.target.id, worldPos.x - dragInfo.offsetX, worldPos.y - dragInfo.offsetY);
+    } else if (isPanning) {
+      const dx = (e.clientX - panStart.x) / camera.zoom;
+      const dy = (e.clientY - panStart.y) / camera.zoom;
+      setCamera((prev) => ({ ...prev, x: prev.x - dx, y: prev.y - dy }));
+      setPanStart({ x: e.clientX, y: e.clientY });
+    }
+  };
 
-        const handleMouseDown = (e: MouseEvent) => {
-            const screenPos = getMousePos(e);
-            const worldPos = screenToWorld(screenPos);
+  const handleMouseUpOrLeave = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    setDragInfo({ isDragging: false, target: null, offsetX: 0, offsetY: 0 });
+    setIsPanning(false);
+    e.currentTarget.style.cursor = 'grab';
+  };
 
-            const target = store.objects.slice().reverse().find(obj => obj.isPointInside(worldPos.x, worldPos.y));
+  const handleWheel = useCallback((e: WheelEvent) => {
+    e.preventDefault();
+    const zoomFactor = 1.1;
+    setCamera((prev) => {
+      const newZoom = e.deltaY < 0 ? prev.zoom * zoomFactor : prev.zoom / zoomFactor;
+      const clampedZoom = Math.max(0.1, Math.min(newZoom, 10));
+      return { ...prev, zoom: clampedZoom };
+    });
+  }, [setCamera]);
 
-            if (target) {
-                store.setInteractionMode('drag', target);
-            } else {
-                store.setInteractionMode('pan');
-            }
-            store.setInteractionStart(e.clientX, e.clientY);
-        };
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    canvas.addEventListener('wheel', handleWheel, { passive: false });
+    return () => canvas.removeEventListener('wheel', handleWheel);
+  }, [handleWheel]);
+  
+  const handleDragOver = (e: React.DragEvent<HTMLCanvasElement>) => e.preventDefault();
+  const handleDrop = (e: React.DragEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    try {
+      const data = e.dataTransfer.getData('application/json');
+      if (!data) return;
+      const item: PaletteItemData = JSON.parse(data);
+      const worldPos = getWorldMousePos(e);
+      onAddObject(item, worldPos.x, worldPos.y);
+    } catch (err) { console.error("Drop failed:", err); }
+  };
 
-        const handleMouseUp = () => {
-            store.setInteractionMode('none');
-        };
-
-        const handleMouseMove = (e: MouseEvent) => {
-            const { interactionState, camera } = store;
-            if (interactionState.mode === 'none') return;
-
-            const dx = e.clientX - interactionState.startX;
-            const dy = e.clientY - interactionState.startY;
-
-            if (interactionState.mode === 'pan') {
-                store.panCamera(dx, dy);
-            } else if (interactionState.mode === 'drag' && interactionState.target) {
-                store.updateObjectPosition(interactionState.target.id, dx / camera.zoom, dy / camera.zoom);
-            }
-
-            store.setInteractionStart(e.clientX, e.clientY);
-        };
-
-        const handleWheel = (e: WheelEvent) => {
-            e.preventDefault();
-            const screenPos = getMousePos(e);
-            store.zoomCamera(e.deltaY, screenPos);
-        };
-
-        canvas.addEventListener('mousedown', handleMouseDown);
-        window.addEventListener('mouseup', handleMouseUp);
-        canvas.addEventListener('mousemove', handleMouseMove);
-        canvas.addEventListener('wheel', handleWheel);
-
-        return () => {
-            canvas.removeEventListener('mousedown', handleMouseDown);
-            window.removeEventListener('mouseup', handleMouseUp);
-            canvas.removeEventListener('mousemove', handleMouseMove);
-            canvas.removeEventListener('wheel', handleWheel);
-        };
-    }, [getMousePos, screenToWorld, store]);
-
-    return (
-        <div className="flex-1 bg-gray-200 relative overflow-hidden min-h-0">
-            <canvas ref={canvasRef} className="w-full h-full"></canvas>
-        </div>
-    );
+  return (
+    <div className="flex-1 bg-gray-200 relative overflow-hidden">
+      <canvas ref={canvasRef} onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUpOrLeave} onMouseLeave={handleMouseUpOrLeave} onDragOver={handleDragOver} onDrop={handleDrop} onContextMenu={(e) => e.preventDefault()} style={{ cursor: 'grab' }} />
+    </div>
+  );
 };
+export default DuctCanvas;

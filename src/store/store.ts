@@ -10,7 +10,7 @@ export const useAppStore = create<AppState & AppActions>()(immer((set, get) => (
   nextId: 0,
   interactionState: {
     mode: 'none',
-    target: null,
+    targetId: null,
     startX: 0,
     startY: 0,
   },
@@ -58,8 +58,8 @@ export const useAppStore = create<AppState & AppActions>()(immer((set, get) => (
 
     const newZoom = Math.max(0.1, Math.min(camera.zoom / zoomFactor, 10));
     
-    const worldX_before = (mousePos.x - camera.x) / camera.zoom;
-    const worldY_before = (mousePos.y - camera.y) / camera.zoom;
+    const worldX_before = (mousePos.x - camera.x) / newZoom;
+    const worldY_before = (mousePos.y - camera.y) / newZoom;
     
     const newX = mousePos.x - worldX_before * newZoom;
     const newY = mousePos.y - worldY_before * newZoom;
@@ -71,10 +71,10 @@ export const useAppStore = create<AppState & AppActions>()(immer((set, get) => (
     });
   },
 
-  setInteractionMode: (mode, target) => {
+  setInteractionMode: (mode, targetId) => {
     set(state => {
       state.interactionState.mode = mode;
-      state.interactionState.target = target || null;
+      state.interactionState.targetId = targetId || null;
     });
   },
 

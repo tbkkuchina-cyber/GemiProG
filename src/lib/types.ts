@@ -1,34 +1,27 @@
-import { DuctPart } from './objects';
-
+// カメラ（視点）の状態を定義
 export interface Camera {
-    x: number;
-    y: number;
-    zoom: number;
+  x: number;
+  y: number;
+  zoom: number;
 }
 
-export type InteractionMode = 'none' | 'pan' | 'drag';
-
-export interface InteractionState {
-    mode: InteractionMode;
-    target: DuctPart | null;
-    startX: number;
-    startY: number;
+// ダクト部品の基本的なデータ構造
+// （lib/duct-objects.tsのDuctPartクラスと対応）
+export interface DuctPartOptions {
+  id?: number;
+  x?: number;
+  y?: number;
+  rotation?: number;
+  diameter?: number;
+  isSelected?: boolean;
+  length?: number;
+  systemName?: string;
+  legLength?: number;
 }
 
-export interface AppState {
-    objects: DuctPart[];
-    camera: Camera;
-    isPaletteOpen: boolean;
-    nextId: number;
-    interactionState: InteractionState;
-}
-
-export interface AppActions {
-    addObject: (partType: string, options: Record<string, unknown>) => void;
-    updateObjectPosition: (id: number, dx: number, dy: number) => void;
-    panCamera: (dx: number, dy: number) => void;
-    zoomCamera: (delta: number, mousePos: {x: number, y: number}) => void;
-    setInteractionMode: (mode: InteractionMode, target?: DuctPart | null) => void;
-    setInteractionStart: (x: number, y: number) => void;
-    togglePalette: () => void;
+// パレットに表示するアイテムのデータ型を定義
+export interface PaletteItemData {
+  type: 'StraightDuct' | 'Elbow90';
+  name: string;
+  defaultOptions: DuctPartOptions;
 }
