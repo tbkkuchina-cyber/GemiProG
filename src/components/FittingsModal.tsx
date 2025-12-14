@@ -1,8 +1,7 @@
 'use client';
 
-// useRef をインポート
 import { useAtomValue, useSetAtom } from 'jotai';
-import { useEffect, useState, useMemo, useRef } from "react"; // useRef をインポート
+import { useEffect, useState, useMemo, useRef, useCallback } from "react";
 import { X, Plus, Trash2 } from "lucide-react";
 import { FittingItem, Fittings, DuctPartType } from "@/lib/types";
 import {
@@ -13,7 +12,7 @@ import {
   saveFittingsAtom
 } from '@/lib/jotai-store';
 
-// Helper function to generate the name based on diameters (変更なし)
+// Helper function (変更なし)
 const generateNameFromDiameters = (item: FittingItem): string => {
     const d1 = item.diameter || 0;
     const d2 = (item as any).diameter2 || 0;
@@ -28,6 +27,111 @@ const generateNameFromDiameters = (item: FittingItem): string => {
     return `D${d1}`;
 };
 
+// ★★★ 修正点: コンポーネントを外に出すために Props の型を定義 ★★★
+interface FittingCategoryEditorProps {
+  category: string;
+  items: FittingItem[];
+  onInputChange: (category: string, index: number, prop: string, value: any) => void;
+  onDeleteRow: (category: string, index: number) => void;
+  onAddRow: (category: string) => void;
+}
+
+// ★★★ 修正点: FittingCategoryEditor をメインコンポーネントの外に移動 ★★★
+// これにより、再レンダリング時も同じコンポーネントとして認識され、フォーカスが維持されます。
+const FittingCategoryEditor = ({ category, items, onInputChange, onDeleteRow, onAddRow }: FittingCategoryEditorProps) => {
+    const headers = useMemo(() => {
+        const headerSet = new Set<string>();
+        items.forEach(item => { Object.keys(item).forEach(key => headerSet.add(key)); });
+        headerSet.delete('id'); headerSet.delete('type');
+        const sortedHeaders = Array.from(headerSet).sort((a, b) => {
+            const order = ['name', 'visible', 'diameter', 'diameter2', 'diameter3', 'length', 'branchLength', 'legLength', 'angle', 'intersectionOffset'];
+            const indexA = order.indexOf(a); const indexB = order.indexOf(b);
+            if (indexA !== -1 && indexB !== -1) return indexA - indexB;
+            if (indexA !== -1) return -1; if (indexB !== -1) return 1;
+            return a.localeCompare(b);
+        });
+        return sortedHeaders;
+    }, [items]);
+    
+    const headerLabelMap: Record<string, string> = { name: '名前', visible: '表示', diameter: '直径', diameter2: '直径2', diameter3: '直径3', length: '主管長', branchLength: '枝長', legLength: '脚長', angle: '角度', intersectionOffset: '交差オフセット' };
+
+    const renderEditableCell = (item: FittingItem, index: number, prop: string) => {
+        const value = (item as any)[prop];
+        const isNameReadOnly = prop === 'name' && (
+            item.type === DuctPartType.TeeReducer ||
+            item.type === DuctPartType.YBranchReducer ||
+            item.type === DuctPartType.Reducer ||
+            item.type === DuctPartType.Elbow90 || 
+            item.type === DuctPartType.AdjustableElbow || 
+            item.type === DuctPartType.Damper 
+        );
+        const isReadOnly = prop === 'id' || prop === 'type' || isNameReadOnly;
+
+        if (prop === 'visible') {
+          return ( 
+            <td key={prop} className="p-2 text-center align-top"> 
+                <input 
+                    type="checkbox" 
+                    checked={!!value} 
+                    onChange={(e) => onInputChange(category, index, prop, e.target.checked)} 
+                    className="h-5 w-5 rounded mt-1" 
+                /> 
+            </td> 
+          );
+        }
+        
+        let inputType = typeof value === 'number' ? 'number' : 'text';
+        let step = undefined;
+        if (inputType === 'number') { step = prop.includes('diameter') ? 25 : 1; }
+
+        return (
+            <td key={prop} className="p-2 align-top">
+                <input 
+                    type={inputType} 
+                    // ★ null/undefined 対策を行い、value を確実に制御する
+                    value={value !== undefined && value !== null ? String(value) : ''} 
+                    readOnly={isReadOnly} 
+                    step={step} 
+                    min={prop.includes('diameter') ? 25 : undefined}
+                    onChange={(e) => {
+                        const val = inputType === 'number' ? parseFloat(e.target.value) : e.target.value;
+                        // 数値入力で空文字になった場合は 0 や null ではなく空文字として扱いたい場合もあるが、
+                        // ここでは既存ロジックに合わせてパース結果を渡す
+                        onInputChange(category, index, prop, isNaN(val as number) && inputType === 'number' ? 0 : val);
+                    }}
+                    className={`w-full p-1 border rounded min-w-[80px] ${isReadOnly ? 'bg-gray-100' : ''}`}
+                />
+            </td>
+        );
+    }
+
+    return (
+        <div className="mb-8">
+            <h3 className="text-xl font-semibold mb-3 border-b pb-2">{category}</h3>
+            <div className="overflow-x-auto">
+                <table className="w-full text-left table-auto border-collapse">
+                    <thead><tr>
+                        {headers.map(header => ( <th key={header} className="p-2 text-sm font-semibold capitalize border-b-2">{headerLabelMap[header] || header}</th> ))}
+                        <th className="p-2 text-sm font-semibold border-b-2">削除</th>
+                    </tr></thead>
+                    <tbody>{items.map((item, index) => (
+                        <tr key={item.id} className="border-t">
+                            {headers.map(header => renderEditableCell(item, index, header))}
+                            <td className="p-2 align-top">
+                                <button onClick={() => onDeleteRow(category, index)} className="text-red-500 hover:text-red-700 mt-1">
+                                    <Trash2 size={20} />
+                                </button>
+                            </td>
+                        </tr>
+                    ))}</tbody>
+                </table>
+            </div>
+            <button onClick={() => onAddRow(category)} className="mt-2 bg-gray-200 text-gray-700 px-3 py-1 rounded hover:bg-gray-300 text-sm"> <Plus size={16} className="inline-block mr-1" /> 行を追加 </button>
+        </div>
+    );
+};
+
+
 const FittingsModal = () => {
   const isOpen = useAtomValue(isFittingsModalOpenAtom);
   const onClose = useSetAtom(closeFittingsModalAtom);
@@ -40,13 +144,10 @@ const FittingsModal = () => {
 
   useEffect(() => {
     if (isOpen) {
-        // ★★★ 修正点 ★★★
-        // ここでの deep copy は問題ありません (モーダルを開くときに1回だけ実行されるため)
         setLocalFittings(JSON.parse(JSON.stringify(globalFittings)));
     }
   }, [globalFittings, isOpen]);
 
-  // (背景スクロール防止の useEffect は変更なし)
   useEffect(() => {
     const scrollableElement = scrollableContentRef.current;
     const preventDefaultForBackground = (e: Event) => {
@@ -75,25 +176,15 @@ const FittingsModal = () => {
 
   if (!isOpen) return null;
 
-  // ★★★ 修正点 ★★★
-  // `JSON.parse(JSON.stringify(...))` を削除し、
-  // 変更された項目のみをイミュータブル（immutable）に更新する
-  // 効率的なロジックに変更します。
+  // 変更ロジック（前回のイミュータブル更新を維持）
   const handleInputChange = (category: string, index: number, prop: string, value: any) => {
     setLocalFittings(prevFittings => {
-      // 1. カテゴリの辞書を浅くコピー
       const newFittings = { ...prevFittings };
-      
-      // 2. 変更対象のカテゴリの配列を浅くコピー
       const newItems = [...newFittings[category]];
-      
-      // 3. 変更対象のアイテムを浅くコピー
       const newItem = { ...newItems[index] };
 
-      // 4. 新しいアイテムのプロパティを更新
       (newItem as any)[prop] = value;
 
-      // 5. 自動命名・自動計算ロジックを (newItem に対して) 実行
       if (prop.includes('diameter')) {
           if (newItem.type === DuctPartType.TeeReducer || newItem.type === DuctPartType.YBranchReducer || newItem.type === DuctPartType.Reducer || newItem.type === DuctPartType.Elbow90 || newItem.type === DuctPartType.AdjustableElbow || newItem.type === DuctPartType.Damper) {
              newItem.name = generateNameFromDiameters(newItem);
@@ -110,22 +201,17 @@ const FittingsModal = () => {
           }
       }
 
-      // 6. 新しい配列に新しいアイテムをセット
       newItems[index] = newItem;
-      
-      // 7. 新しい辞書に新しい配列をセット
       newFittings[category] = newItems;
-
-      // 8. 新しい辞書を返す
       return newFittings;
     });
   };
-  // ★★★ 修正ここまで ★★★
 
-  // (handleAddRow, handleDeleteRow, handleSaveChanges は変更なし)
   const handleAddRow = (category: string) => {
-    const newFittings = JSON.parse(JSON.stringify(localFittings));
-    const items = newFittings[category];
+    // 追加時は配列操作のみなのでディープコピーでも許容範囲だが、一貫性のため簡易コピーを使用
+    const newFittings = { ...localFittings };
+    const items = [...newFittings[category]];
+    
     const templateItem = items.length > 0 ? items[0] : { type: items[0]?.type || DuctPartType.Straight };
     const newItem: FittingItem = {
         ...templateItem,
@@ -137,13 +223,16 @@ const FittingsModal = () => {
     newItem.name = generateNameFromDiameters(newItem);
     if (newItem.type === DuctPartType.Elbow90) newItem.legLength = newItem.diameter;
     
-    newFittings[category].push(newItem);
+    items.push(newItem);
+    newFittings[category] = items;
     setLocalFittings(newFittings);
   };
 
   const handleDeleteRow = (category: string, index: number) => {
     const newFittings = { ...localFittings };
-    newFittings[category].splice(index, 1);
+    const items = [...newFittings[category]];
+    items.splice(index, 1);
+    newFittings[category] = items;
     setLocalFittings(newFittings);
   };
 
@@ -151,81 +240,6 @@ const FittingsModal = () => {
     setFittings(localFittings);
     saveFittings();
     onClose();
-  };
-
-  // (FittingCategoryEditor コンポーネントは変更なし)
-  const FittingCategoryEditor = ({ category, items }: { category: string, items: FittingItem[] }) => {
-    // ... (中身は変更なし)
-    const headers = useMemo(() => {
-        const headerSet = new Set<string>();
-        items.forEach(item => { Object.keys(item).forEach(key => headerSet.add(key)); });
-        headerSet.delete('id'); headerSet.delete('type');
-        const sortedHeaders = Array.from(headerSet).sort((a, b) => {
-            const order = ['name', 'visible', 'diameter', 'diameter2', 'diameter3', 'length', 'branchLength', 'legLength', 'angle', 'intersectionOffset'];
-            const indexA = order.indexOf(a); const indexB = order.indexOf(b);
-            if (indexA !== -1 && indexB !== -1) return indexA - indexB;
-            if (indexA !== -1) return -1; if (indexB !== -1) return 1;
-            return a.localeCompare(b);
-        });
-        return sortedHeaders;
-    }, [items]);
-    const headerLabelMap: Record<string, string> = { name: '名前', visible: '表示', diameter: '直径', diameter2: '直径2', diameter3: '直径3', length: '主管長', branchLength: '枝長', legLength: '脚長', angle: '角度', intersectionOffset: '交差オフセット' };
-
-    const renderEditableCell = (item: FittingItem, index: number, prop: string) => {
-        const value = (item as any)[prop];
-        const isNameReadOnly = prop === 'name' && (
-            item.type === DuctPartType.TeeReducer ||
-            item.type === DuctPartType.YBranchReducer ||
-            item.type === DuctPartType.Reducer ||
-            item.type === DuctPartType.Elbow90 || 
-            item.type === DuctPartType.AdjustableElbow || 
-            item.type === DuctPartType.Damper 
-        );
-        const isReadOnly = prop === 'id' || prop === 'type' || isNameReadOnly;
-
-        if (prop === 'visible') {
-          return ( <td key={prop} className="p-2 text-center align-top"> <input type="checkbox" checked={!!value} onChange={(e) => handleInputChange(category, index, prop, e.target.checked)} className="h-5 w-5 rounded mt-1" /> </td> );
-        }
-        let inputType = typeof value === 'number' ? 'number' : 'text';
-        let step = undefined;
-        if (inputType === 'number') { step = prop.includes('diameter') ? 25 : 1; }
-
-        return (
-            <td key={prop} className="p-2 align-top">
-                <input type={inputType} value={value !== undefined && value !== null ? String(value) : ''} readOnly={isReadOnly} step={step} min={prop.includes('diameter') ? 25 : undefined}
-                    onChange={(e) => {
-                        const val = inputType === 'number' ? parseFloat(e.target.value) || 0 : e.target.value;
-                        handleInputChange(category, index, prop, val);
-                    }}
-                    className={`w-full p-1 border rounded min-w-[80px] ${isReadOnly ? 'bg-gray-100' : ''}`}
-                />
-            </td>
-        );
-      }
-    return (
-        <div className="mb-8">
-            <h3 className="text-xl font-semibold mb-3 border-b pb-2">{category}</h3>
-            <div className="overflow-x-auto">
-                <table className="w-full text-left table-auto border-collapse">
-                    <thead><tr>
-                        {headers.map(header => ( <th key={header} className="p-2 text-sm font-semibold capitalize border-b-2">{headerLabelMap[header] || header}</th> ))}
-                        <th className="p-2 text-sm font-semibold border-b-2">削除</th>
-                    </tr></thead>
-                    <tbody>{items.map((item, index) => (
-                        <tr key={item.id} className="border-t">
-                            {headers.map(header => renderEditableCell(item, index, header))}
-                            <td className="p-2 align-top">
-                                <button onClick={() => handleDeleteRow(category, index)} className="text-red-500 hover:text-red-700 mt-1">
-                                    <Trash2 size={20} />
-                                </button>
-                            </td>
-                        </tr>
-                    ))}</tbody>
-                </table>
-            </div>
-            <button onClick={() => handleAddRow(category)} className="mt-2 bg-gray-200 text-gray-700 px-3 py-1 rounded hover:bg-gray-300 text-sm"> <Plus size={16} className="inline-block mr-1" /> 行を追加 </button>
-        </div>
-    );
   };
 
   return (
@@ -241,7 +255,14 @@ const FittingsModal = () => {
           {Object.entries(localFittings)
             .sort(([catA], [catB]) => catA.localeCompare(catB)) 
             .map(([category, items]) => (
-             <FittingCategoryEditor key={category} category={category} items={items} />
+             <FittingCategoryEditor 
+                key={category} 
+                category={category} 
+                items={items} 
+                onInputChange={handleInputChange}
+                onDeleteRow={handleDeleteRow}
+                onAddRow={handleAddRow}
+             />
            ))}
         </div>
         <div className="mt-4 border-t pt-4 flex justify-end space-x-2">
