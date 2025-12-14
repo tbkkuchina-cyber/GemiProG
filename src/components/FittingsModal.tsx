@@ -1,7 +1,7 @@
 'use client';
 
 import { useAtomValue, useSetAtom } from 'jotai';
-import { useEffect, useState, useMemo, useRef, useCallback } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import { X, Plus, Trash2 } from "lucide-react";
 import { FittingItem, Fittings, DuctPartType } from "@/lib/types";
 import {
@@ -12,7 +12,7 @@ import {
   saveFittingsAtom
 } from '@/lib/jotai-store';
 
-// Helper function (変更なし)
+// Helper function
 const generateNameFromDiameters = (item: FittingItem): string => {
     const d1 = item.diameter || 0;
     const d2 = (item as any).diameter2 || 0;
@@ -27,7 +27,7 @@ const generateNameFromDiameters = (item: FittingItem): string => {
     return `D${d1}`;
 };
 
-// ★★★ 修正点: コンポーネントを外に出すために Props の型を定義 ★★★
+// Props definition
 interface FittingCategoryEditorProps {
   category: string;
   items: FittingItem[];
@@ -36,8 +36,7 @@ interface FittingCategoryEditorProps {
   onAddRow: (category: string) => void;
 }
 
-// ★★★ 修正点: FittingCategoryEditor をメインコンポーネントの外に移動 ★★★
-// これにより、再レンダリング時も同じコンポーネントとして認識され、フォーカスが維持されます。
+// Sub-component
 const FittingCategoryEditor = ({ category, items, onInputChange, onDeleteRow, onAddRow }: FittingCategoryEditorProps) => {
     const headers = useMemo(() => {
         const headerSet = new Set<string>();
@@ -88,15 +87,12 @@ const FittingCategoryEditor = ({ category, items, onInputChange, onDeleteRow, on
             <td key={prop} className="p-2 align-top">
                 <input 
                     type={inputType} 
-                    // ★ null/undefined 対策を行い、value を確実に制御する
                     value={value !== undefined && value !== null ? String(value) : ''} 
                     readOnly={isReadOnly} 
                     step={step} 
                     min={prop.includes('diameter') ? 25 : undefined}
                     onChange={(e) => {
                         const val = inputType === 'number' ? parseFloat(e.target.value) : e.target.value;
-                        // 数値入力で空文字になった場合は 0 や null ではなく空文字として扱いたい場合もあるが、
-                        // ここでは既存ロジックに合わせてパース結果を渡す
                         onInputChange(category, index, prop, isNaN(val as number) && inputType === 'number' ? 0 : val);
                     }}
                     className={`w-full p-1 border rounded min-w-[80px] ${isReadOnly ? 'bg-gray-100' : ''}`}
@@ -130,7 +126,6 @@ const FittingCategoryEditor = ({ category, items, onInputChange, onDeleteRow, on
         </div>
     );
 };
-
 
 const FittingsModal = () => {
   const isOpen = useAtomValue(isFittingsModalOpenAtom);
@@ -176,7 +171,6 @@ const FittingsModal = () => {
 
   if (!isOpen) return null;
 
-  // 変更ロジック（前回のイミュータブル更新を維持）
   const handleInputChange = (category: string, index: number, prop: string, value: any) => {
     setLocalFittings(prevFittings => {
       const newFittings = { ...prevFittings };
@@ -208,17 +202,19 @@ const FittingsModal = () => {
   };
 
   const handleAddRow = (category: string) => {
-    // 追加時は配列操作のみなのでディープコピーでも許容範囲だが、一貫性のため簡易コピーを使用
     const newFittings = { ...localFittings };
     const items = [...newFittings[category]];
     
-    const templateItem = items.length > 0 ? items[0] : { type: items[0]?.type || DuctPartType.Straight };
+    // ★★★ 修正点: templateItem に型注釈 Partial<FittingItem> を追加し、diameterの型エラーを回避 ★★★
+    const templateItem: Partial<FittingItem> = items.length > 0 ? items[0] : { type: DuctPartType.Straight };
+    
     const newItem: FittingItem = {
-        ...templateItem,
+        ...(templateItem as FittingItem), // spreadする際にキャスト
         id: `${category.replace(/[^a-zA-Z0-9]/g, '')}-${Date.now()}`,
         name: '新規',
-        diameter: templateItem.diameter || 100,
+        diameter: templateItem.diameter || 100, // Partial型なので、undefinedの場合は100を使用
         visible: true,
+        type: templateItem.type || DuctPartType.Straight // typeも確実に設定
     };
     newItem.name = generateNameFromDiameters(newItem);
     if (newItem.type === DuctPartType.Elbow90) newItem.legLength = newItem.diameter;
