@@ -1,7 +1,8 @@
 import { atom } from 'jotai';
-import { AnyDuctPart, Camera, Point, Fittings, ConfirmModalContent, Dimension, SnapPoint, FittingItem, DuctPartType, DragState, StraightDuct, Connector, IntersectionPoint } from './types';
+import { AnyDuctPart, Camera, Point, Fittings, ConfirmModalContent, Dimension, SnapPoint, FittingItem, DuctPartType, DragState, StraightDuct, Connector, IntersectionPoint, TakeoffResult } from './types';
 import { getDefaultFittings } from './default-fittings';
 import { createDuctPart } from './duct-models';
+import { performTakeoff } from './duct-calculations';
 // ★★★ 修正点: canvas-utils からのインポートを削除 (循環参照の解消) ★★★
 // import { getPointForDim } from './canvas-utils'; 
 
@@ -193,6 +194,13 @@ export const allDimensionsAtom = atom((get) => {
     const userDimensions = get(dimensionsAtom);
     const autoRunDimensions = get(straightRunDimensionsAtom);
     return [...userDimensions, ...autoRunDimensions];
+});
+
+// ★★★ 追加: 積算結果の派生 Atom ★★★
+// objectsAtom が更新されると、自動的に再計算されます
+export const takeoffResultAtom = atom<TakeoffResult>((get) => {
+  const objects = get(objectsAtom);
+  return performTakeoff(objects);
 });
 
 
@@ -612,3 +620,41 @@ export const openFittingsModalAtom = atom(null, (get, set) => { set(isFittingsMo
 export const closeFittingsModalAtom = atom(null, (get, set) => { set(isFittingsModalOpenAtom, false); });
 
 export const triggerScreenshotAtom = atom<number>(0);
+
+// ★★★ 追加: 背景図面と縮尺管理用のアトム ★★★
+
+// 背景画像データ (HTMLImageElement)
+export const backgroundImageAtom = atom<HTMLImageElement | null>(null);
+
+// 背景画像の表示設定 (位置・透明度など)
+export const backgroundConfigAtom = atom({
+  x: 0,
+  y: 0,
+  opacity: 0.4, // 図面を少し薄くしてダクトを見やすくする
+  scale: 1.0,   // 画像自体の拡大率
+});
+
+// ★ 最重要: 図面の縮尺 (mm / pixel)
+// 例: 100pxの線が 現実の1000mm なら、ratio は 10.0
+export const drawingScaleAtom = atom<number>(1.0); // デフォルトは 1px = 1mm
+
+// 計測・縮尺設定モード用
+// 'calibration' = 縮尺設定のための2点クリック待機中
+export const calibrationModeAtom = atom<boolean>(false);
+export const calibrationPointsAtom = atom<{x: number, y: number}[]>([]);
+
+// --- 作図モード用のアトム ---
+
+// 作図中の仮の始点 (nullなら作図していない)
+export const drawingStartPointAtom = atom<{x: number, y: number} | null>(null);
+
+// 作図中の仮の終点 (マウス移動中に更新)
+export const drawingEndPointAtom = atom<{x: number, y: number} | null>(null);
+
+// 現在選択中のツール ('select' | 'straight' | 'elbow' 等)
+export const activeToolAtom = atom<string>('select'); 
+
+// --- 設定・プロパティ関連 ---
+
+// 現在設定されているダクト直径 (デフォルト 200mm)
+export const currentDiameterAtom = atom<number>(200);
