@@ -14,7 +14,7 @@ interface DimensionModalProps {
     p1: SnapPoint;
     p2: SnapPoint;
     measuredDistance?: number; 
-    ductToUpdateId?: number;  
+    ductToUpdateId?: string; // stringに変更
     lengthToSubtract?: number;
   } | null;
 }

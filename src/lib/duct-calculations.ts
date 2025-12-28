@@ -1,97 +1,70 @@
-import { AnyDuctPart, DuctPartType, TakeoffResult, FlangeSpec } from './types';
-import { createDuctPart } from './duct-models';
+import { AnyDuctPart, Point, Camera, DuctPartType, TakeoffResult } from './types';
 
-// 直管の定尺(4m)取り合わせ計算 (First-Fit法)
-const calculateStock = (objects: AnyDuctPart[], standardLength = 4000) => {
-  const stockMap: Record<number, number> = {}; 
-
-  // 直管のみ抽出し、直径ごとにグループ化
-  const grouped = objects
-    .filter(obj => obj.type === DuctPartType.Straight)
-    .reduce((acc, obj) => {
-      // createDuctPartを経由して正確な長さを取得（またはobj.lengthを直接使用）
-      const model = createDuctPart(obj);
-      // StraightDuct型であることを確認して長さを取得
-      const len = (model as any)?.length || 0;
-      
-      if (len > 0) {
-        const d = obj.diameter;
-        if (!acc[d]) acc[d] = [];
-        acc[d].push(len);
-      }
-      return acc;
-    }, {} as Record<number, number[]>);
-
-  // 計算処理
-  Object.keys(grouped).forEach(dKey => {
-    const diameter = parseInt(dKey);
-    // 長い部材から順に割り当て
-    const lengths = grouped[diameter].sort((a, b) => b - a);
-    const bins: number[] = []; // 各定尺材の「残り長さ」
-
-    lengths.forEach(len => {
-      let placed = false;
-      for (let i = 0; i < bins.length; i++) {
-        if (bins[i] >= len) {
-          bins[i] -= len;
-          placed = true;
-          break;
-        }
-      }
-      if (!placed) {
-        if (len > standardLength) {
-           const count = Math.ceil(len / standardLength);
-           for(let k=0; k<count; k++) bins.push(0); 
-        } else {
-           bins.push(standardLength - len);
-        }
-      }
-    });
-    stockMap[diameter] = bins.length;
-  });
-
-  return stockMap;
+// 2点間の距離
+export const distance = (p1: Point, p2: Point): number => {
+  return Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
 };
 
-// フランジスペック定義 (簡易マスタ)
-const getFlangeSpec = (d: number): FlangeSpec => {
-  if (d <= 150) return { diameter: d, holeCount: 6, boltSize: 'M8' };
-  if (d <= 300) return { diameter: d, holeCount: 8, boltSize: 'M8' };
-  if (d <= 500) return { diameter: d, holeCount: 12, boltSize: 'M10' };
-  return { diameter: d, holeCount: 16, boltSize: 'M10' };
+// 画面座標からワールド座標への変換
+export const screenToWorld = (screenPos: Point, canvas: HTMLElement, camera: Camera): Point => {
+  return {
+    x: (screenPos.x - camera.x) / camera.zoom,
+    y: (screenPos.y - camera.y) / camera.zoom,
+  };
 };
 
-// 材料拾い出し総計算
+// ダクトモデルの生成
+export const createDuctPart = (part: AnyDuctPart): AnyDuctPart => {
+  return part;
+};
+
+// スナップポイントの取得
+export const getSnapPoints = (part: AnyDuctPart): Point[] => {
+  if (!part.points || part.points.length === 0) {
+    return [{ x: part.x || 0, y: part.y || 0 }];
+  }
+  // 直管の場合、両端
+  if (part.type === DuctPartType.Straight && part.points.length >= 2) {
+    return [part.points[0], part.points[1]];
+  }
+  // その他の形状も基本的にはpointsを返す
+  return part.points;
+};
+
+// ★★★ 追加: 積算機能 (performTakeoff) ★★★
 export const performTakeoff = (objects: AnyDuctPart[]): TakeoffResult => {
-  let totalGasketLen = 0; 
-  let totalBolts = 0;
+  const straightStock: Record<number, number> = {};
   const flangeCounts: Record<number, number> = {};
+  let totalBolts = 0;
+  let totalGasketLen = 0;
 
-  objects.forEach(obj => {
-    const d = obj.diameter;
-    const spec = getFlangeSpec(d);
+  objects.forEach(part => {
+    // 1. 直管の集計
+    if (part.type === DuctPartType.Straight && part.length) {
+      const d = part.diameter;
+      const count = straightStock[d] || 0;
+      straightStock[d] = count + 1; 
+    }
 
-    // 接合部1か所につきフランジ2枚
-    // 簡易ロジック: 部品1つにつき「両端」で接続が必要と仮定して算出
-    // (ダンパーや直管は2箇所、キャップなら1箇所など、本来は詳細分岐が可能)
-    const flangesNeeded = 2; 
-    
-    if (!flangeCounts[d]) flangeCounts[d] = 0;
-    flangeCounts[d] += flangesNeeded;
+    // 2. フランジの集計 (接続箇所の数で概算)
+    let flanges = 0;
+    if (part.type === DuctPartType.Straight) flanges = 2;
+    else if (part.type === DuctPartType.Elbow90) flanges = 2;
+    else if (part.type === DuctPartType.Reducer) flanges = 2;
+    else if (part.type === DuctPartType.Tee) flanges = 3;
+    else if (part.type === DuctPartType.Cap) flanges = 1;
 
-    const joints = flangesNeeded / 2;
-    totalBolts += joints * spec.holeCount;
-    
-    // ガスケット = 円周 * 接合部数
-    totalGasketLen += (d * Math.PI) * joints;
+    if (flanges > 0) {
+      flangeCounts[part.diameter] = (flangeCounts[part.diameter] || 0) + flanges;
+      totalBolts += flanges * 8; // 仮: 1枚あたり8組
+      totalGasketLen += (part.diameter * Math.PI / 1000) * flanges;
+    }
   });
-
-  const straightStock = calculateStock(objects);
 
   return {
     straightStock,
     flangeCounts,
     totalBolts,
-    totalGasketLen: Math.ceil(totalGasketLen / 1000), // m単位
+    totalGasketLen
   };
 };

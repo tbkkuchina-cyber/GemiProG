@@ -31,8 +31,8 @@ export interface DuctPartOptions {
 }
 
 export abstract class DuctPart implements IDuctPart {
-    id: number;
-    groupId: number;
+    id: string;
+    groupId: string;
     x: number;
     y: number;
     rotation: number;
@@ -44,8 +44,8 @@ export abstract class DuctPart implements IDuctPart {
     name: string;
 
     constructor(x: number, y: number, options: DuctPartOptions = {}) {
-        this.id = 0;
-        this.groupId = 0;
+        this.id = ''; // stringとして初期化
+        this.groupId = ''; // stringとして初期化
         this.x = x;
         this.y = y;
         this.rotation = options.rotation || 0;

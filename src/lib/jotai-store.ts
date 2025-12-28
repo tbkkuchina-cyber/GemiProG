@@ -3,14 +3,11 @@ import { AnyDuctPart, Camera, Point, Fittings, ConfirmModalContent, Dimension, S
 import { getDefaultFittings } from './default-fittings';
 import { createDuctPart } from './duct-models';
 import { performTakeoff } from './duct-calculations';
-// ★★★ 修正点: canvas-utils からのインポートを削除 (循環参照の解消) ★★★
-// import { getPointForDim } from './canvas-utils'; 
+import { v4 as uuidv4 } from 'uuid';
 
 const FITTINGS_STORAGE_KEY = 'ductAppFittings';
 
-// ★★★ 修正点: getPointForDim をストア内にコピー ★★★
-// (updateStraightDuctLengthAtom が使用するために必要)
-function getPointForDim(objId: number, pointType: 'connector' | 'intersection', pointId: number | string, objects: AnyDuctPart[]): Point | null {
+function getPointForDim(objId: string, pointType: 'connector' | 'intersection', pointId: string, objects: AnyDuctPart[]): Point | null {
     const obj = objects.find(o => o.id === objId);
     if (!obj) return null;
     const model = createDuctPart(obj);
@@ -18,9 +15,10 @@ function getPointForDim(objId: number, pointType: 'connector' | 'intersection', 
 
     let point: Point | Connector | IntersectionPoint | undefined | null = null;
     if (pointType === 'connector') {
-        point = model.getConnectors().find(p => p.id === pointId);
+        const parsedPointId = typeof pointId === 'string' ? parseInt(pointId, 10) : pointId; // stringをnumberに変換
+        point = model.getConnectors().find(p => p.id === parsedPointId);
     } else {
-        point = model.getIntersectionPoints().find(p => p.id === pointId);
+        point = model.getIntersectionPoints().find(p => String(p.id) === pointId);
     }
 
     return point ? { x: point.x, y: point.y } : null;
@@ -30,7 +28,7 @@ function getPointForDim(objId: number, pointType: 'connector' | 'intersection', 
 export const objectsAtom = atom<AnyDuctPart[]>([]);
 export const dimensionsAtom = atom<Dimension[]>([]); // ユーザーが手動で追加した寸法
 export const cameraAtom = atom<Camera>({ x: 0, y: 0, zoom: 1 / (1.2 * 1.2) });
-export const selectedObjectIdAtom = atom<number | null>(null);
+export const selectedObjectIdAtom = atom<string | null>(null); // stringに変更
 export const modeAtom = atom<'pan' | 'measure'>('pan');
 export const isPanningAtom = atom<boolean>(false);
 export const dragStateAtom = atom<DragState>({ isDragging: false, targetId: null, initialPositions: null, offset: { x: 0, y: 0 } });
@@ -45,15 +43,12 @@ export const dimensionModalContentAtom = atom<{
     p1: SnapPoint;
     p2: SnapPoint;
     measuredDistance?: number;
-    ductToUpdateId?: number;
+    ductToUpdateId?: string; // stringに変更
     lengthToSubtract?: number;
   } | null>(null);
 export const isFittingsModalOpenAtom = atom<boolean>(false);
-export const nextIdAtom = atom<number>(0);
 export const pendingActionAtom = atom<string | null>(null);
 
-// ★★★ 修正点: 以下のアトムを追加 ★★★
-// デフォルトは true (開いた状態) にします
 export const isPaletteOpenAtom = atom<boolean>(true);
 
 // --- Notification Atom ---
@@ -68,12 +63,10 @@ export const showNotificationAtom = atom(null, (get, set, message: string) => {
     }, 3000);
 });
 
-
 // --- History (Undo/Redo) Atoms ---
 type HistoryState = { objects: AnyDuctPart[], dimensions: Dimension[] };
 export const historyAtom = atom<HistoryState[]>([]);
 export const historyIndexAtom = atom<number>(-1);
-
 
 // --- Derived Atoms ---
 export const selectedObjectAtom = atom((get) => {
@@ -84,7 +77,6 @@ export const selectedObjectAtom = atom((get) => {
 export const canUndoAtom = atom((get) => get(historyIndexAtom) > 0);
 export const canRedoAtom = atom((get) => get(historyIndexAtom) < get(historyAtom).length - 1);
 
-
 // --- (自動計算される赤い補助線) ---
 const straightRunDimensionsAtom = atom((get): Dimension[] => {
     const objects = get(objectsAtom);
@@ -93,7 +85,7 @@ const straightRunDimensionsAtom = atom((get): Dimension[] => {
         return [];
     }
 
-    const adj = new Map<number, number[]>();
+    const adj = new Map<string, string[]>(); // キーをstringに変更
     straightDucts.forEach(duct => adj.set(duct.id, []));
 
     // 1. 直管同士の接続マップを作成
@@ -112,15 +104,15 @@ const straightRunDimensionsAtom = atom((get): Dimension[] => {
         }
     }
 
-    const visited = new Set<number>();
+    const visited = new Set<string>(); // Setの要素をstringに変更
     const newRunDimensions: Dimension[] = [];
 
     // 2. 接続コンポーネント（ラン）を探索
     for (const duct of straightDucts) {
         if (visited.has(duct.id)) continue;
 
-        const componentIds: number[] = [];
-        const queue = [duct.id];
+        const componentIds: string[] = []; // 要素をstringに変更
+        const queue = [duct.id]; // 要素をstringに変更
         visited.add(duct.id);
 
         while (queue.length > 0) {
@@ -137,13 +129,12 @@ const straightRunDimensionsAtom = atom((get): Dimension[] => {
         if (componentIds.length < 2) continue; // 2本以上で構成されるランのみ
 
         const componentObjects = componentIds.map(id => straightDucts.find(d => d.id === id)!);
-        const endPoints: (Connector & { objId: number, pointType: 'connector' | 'intersection' })[] = [];
+        const endPoints: (Connector & { objId: string, pointType: 'connector' | 'intersection' })[] = []; // objIdをstringに
 
         // 3. ランの「端点」を見つける
         for (const ductInComponent of componentObjects) {
             const ductModel = createDuctPart(ductInComponent)!;
             for (const connector of ductModel.getConnectors()) {
-                // このコネクタが「このランの他の直管」に接続されていないか？
                 const isConnectedToComponentDuct = componentObjects.some(otherDuct => {
                     if (ductInComponent.id === otherDuct.id) return false;
                     const otherModel = createDuctPart(otherDuct)!;
@@ -151,7 +142,6 @@ const straightRunDimensionsAtom = atom((get): Dimension[] => {
                 });
 
                 if (!isConnectedToComponentDuct) {
-                    // 4. 端点に接続されている「継手」を見つける
                     const connectedFitting = objects.find(o => 
                         o.type !== DuctPartType.Straight && 
                         createDuctPart(o)!.getConnectors().some(c => Math.hypot(c.x - connector.x, c.y - connector.y) < 1)
@@ -160,7 +150,6 @@ const straightRunDimensionsAtom = atom((get): Dimension[] => {
                     const endObject = connectedFitting || ductInComponent;
                     const endModel = createDuctPart(endObject)!;
                     
-                    // (ここからが途切れていた箇所)
                     const endPointInfo = connectedFitting 
                         ? { ...endModel.getConnectors().find(c => Math.hypot(c.x - connector.x, c.y - connector.y) < 1)!, objId: endObject.id, pointType: 'connector' as const } 
                         : { ...connector, objId: endObject.id, pointType: 'connector' as const };
@@ -176,10 +165,10 @@ const straightRunDimensionsAtom = atom((get): Dimension[] => {
             const distance = Math.hypot(p2_info.x - p1_info.x, p2_info.y - p1_info.y);
 
             const newDim: Dimension = {
-                p1_objId: p1_info.objId, p1_pointId: p1_info.id, p1_pointType: p1_info.pointType,
-                p2_objId: p2_info.objId, p2_pointId: p2_info.id, p2_pointType: p2_info.pointType,
+                p1_objId: p1_info.objId, p1_pointId: String(p1_info.id), p1_pointType: p1_info.pointType, 
+                p2_objId: p2_info.objId, p2_pointId: String(p2_info.id), p2_pointType: p2_info.pointType, 
                 value: distance,
-                isStraightRun: true, // ★ 赤くするためのフラグ
+                isStraightRun: true, 
                 id: `run-${componentIds.sort().join('-')}`
             };
             
@@ -196,13 +185,10 @@ export const allDimensionsAtom = atom((get) => {
     return [...userDimensions, ...autoRunDimensions];
 });
 
-// ★★★ 追加: 積算結果の派生 Atom ★★★
-// objectsAtom が更新されると、自動的に再計算されます
 export const takeoffResultAtom = atom<TakeoffResult>((get) => {
   const objects = get(objectsAtom);
   return performTakeoff(objects);
 });
-
 
 // --- Write-only Atoms (Actions) ---
 
@@ -242,8 +228,8 @@ export const redoAtom = atom(null, (get, set) => {
 });
 
 export const addObjectAtom = atom(null, (get, set, part: AnyDuctPart) => {
-  const newId = part.id || Date.now();
-  const partWithId = { ...part, id: newId, groupId: newId }; 
+  const newId = part.id || uuidv4(); // idがstring
+  const partWithId = { ...part, id: newId, groupId: part.groupId || newId }; // groupIdもstring
   set(objectsAtom, (prev) => [...prev, partWithId]);
   set(saveStateAtom); 
 });
@@ -256,13 +242,13 @@ export const clearCanvasAtom = atom(null, (get, set) => {
 });
 
 const recalculateGroups = (subset: AnyDuctPart[], allObjects: AnyDuctPart[]): AnyDuctPart[] => {
-    const visited = new Set<number>();
+    const visited = new Set<string>(); // stringに変更
     const updatedSubset: AnyDuctPart[] = [];
     const subsetMap = new Map(subset.map(o => [o.id, { ...o }]));
     for (const startObj of subset) {
         if (!visited.has(startObj.id)) {
-            const newGroupId = startObj.id; 
-            const queue = [startObj.id];
+            const newGroupId = startObj.id; // string
+            const queue = [startObj.id]; // string
             visited.add(startObj.id);
             subsetMap.get(startObj.id)!.groupId = newGroupId;
             let head = 0;
@@ -389,7 +375,7 @@ export const disconnectSelectedObjectAtom = atom(null, (get, set) => {
         if (!objectToDisconnect) return;
         const oldGroupId = objectToDisconnect.groupId;
         const objectsWithDisconnected = allCurrentObjects.map(o =>
-            o.id === selectedId ? { ...o, groupId: o.id } : o
+            o.id === selectedId ? { ...o, groupId: uuidv4() } : o // 新しいgroupIdをstringで生成
         );
         const remainingInGroup = objectsWithDisconnected.filter(o => o.groupId === oldGroupId && o.id !== selectedId);
         if (remainingInGroup.length > 0) {
@@ -422,7 +408,7 @@ export const addOrUpdateDimensionAtom = atom(null, (get, set, dimensionData: Omi
             index === existingDimIndex ? { ...dim, value: dimensionData.value } : dim
         ));
     } else {
-        const newDimension: Dimension = { ...dimensionData, id: `dim-${Date.now()}` };
+        const newDimension: Dimension = { ...dimensionData, id: uuidv4() }; // idをstringで生成
         set(dimensionsAtom, prev => [...prev, newDimension]);
     }
 });
@@ -431,11 +417,10 @@ export const addDimensionAtom = atom(null, (get, set, dimensionData: Omit<Dimens
     set(saveStateAtom); 
 });
 
-
 // --- updateStraightDuctLengthAtom (変更なし - 前回の修正を維持) ---
 interface UpdateStraightDuctLengthPayload {
     totalDistance: number;
-    ductToUpdateId: number;
+    ductToUpdateId: string; // stringに変更
     lengthToSubtract: number;
     p1_info: SnapPoint; 
     p2_info: SnapPoint; 
@@ -482,8 +467,8 @@ export const updateStraightDuctLengthAtom = atom(
         const dx = direction.x * lengthChange;
         const dy = direction.y * lengthChange;
 
-        const objectsToMove = new Set<number>();
-        const queue: number[] = [];
+        const objectsToMove = new Set<string>(); // stringに変更
+        const queue: string[] = []; // stringに変更
 
         const connectedObjects = currentObjects.filter(o =>
             o.id !== ductToUpdateId &&
@@ -501,7 +486,7 @@ export const updateStraightDuctLengthAtom = atom(
         let head = 0;
         while(head < queue.length) {
             const currentId = queue[head++];
-            const currentObj = currentObjects.find(o => o.id === currentId);
+            const currentObj = currentObjects.find(o => o.id === currentId); 
             const currentModel = currentObj ? createDuctPart(currentObj) : null;
             if (!currentModel) continue;
 
@@ -538,8 +523,8 @@ export const updateStraightDuctLengthAtom = atom(
         const currentDimensions = get(dimensionsAtom); 
         const updatedDimensions = currentDimensions.map(dim => {
             // (ここでストア内の getPointForDim を使用)
-            const p1 = getPointForDim(dim.p1_objId, dim.p1_pointType, dim.p1_pointId, updatedObjects);
-            const p2 = getPointForDim(dim.p2_objId, dim.p2_pointType, dim.p2_pointId, updatedObjects);
+            const p1 = getPointForDim(dim.p1_objId, dim.p1_pointType, String(dim.p1_pointId), updatedObjects);
+            const p2 = getPointForDim(dim.p2_objId, dim.p2_pointType, String(dim.p2_pointId), updatedObjects);
             if (p1 && p2) {
                 return { ...dim, value: Math.hypot(p2.x - p1.x, p2.y - p1.y) };
             }
@@ -550,8 +535,8 @@ export const updateStraightDuctLengthAtom = atom(
         set(objectsAtom, updatedObjects);       
 
         const newDimensionData: Omit<Dimension, 'id'> = {
-            p1_objId: p1_info.objId, p1_pointId: p1_info.pointId, p1_pointType: p1_info.pointType,
-            p2_objId: p2_info.objId, p2_pointId: p2_info.pointId, p2_pointType: p2_info.pointType,
+            p1_objId: p1_info.objId, p1_pointId: String(p1_info.pointId), p1_pointType: p1_info.pointType, 
+            p2_objId: p2_info.objId, p2_pointId: String(p2_info.pointId), p2_pointType: p2_info.pointType, 
             value: totalDistance,
             isStraightRun: false 
         };
@@ -562,11 +547,13 @@ export const updateStraightDuctLengthAtom = atom(
     }
 );
 
+// --- 設定・プロパティ関連 ---
+export const currentDiameterAtom = atom<number>(200);
 
 // --- (その他のアトムは変更なし) ---
 export const setFittingsAtom = atom(null, (get, set, fittings: Fittings) => { set(fittingsAtom, fittings); });
 export const setCameraAtom = atom(null, (get, set, cameraUpdate: Partial<Camera>) => { set(cameraAtom, (prev) => ({ ...prev, ...cameraUpdate })); });
-export const selectObjectAtom = atom(null, (get, set, objectId: number | null) => {
+export const selectObjectAtom = atom(null, (get, set, objectId: string | null) => { // stringに変更
     set(selectedObjectIdAtom, objectId);
     set(objectsAtom, prev => prev.map(o => ({ ...o, isSelected: o.id === objectId })));
     if (objectId === null) { set(closeContextMenuAtom); }
@@ -652,9 +639,4 @@ export const drawingStartPointAtom = atom<{x: number, y: number} | null>(null);
 export const drawingEndPointAtom = atom<{x: number, y: number} | null>(null);
 
 // 現在選択中のツール ('select' | 'straight' | 'elbow' 等)
-export const activeToolAtom = atom<string>('select'); 
-
-// --- 設定・プロパティ関連 ---
-
-// 現在設定されているダクト直径 (デフォルト 200mm)
-export const currentDiameterAtom = atom<number>(200);
+export const activeToolAtom = atom<string>('select');

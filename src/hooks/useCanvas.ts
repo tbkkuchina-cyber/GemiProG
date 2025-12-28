@@ -1,70 +1,64 @@
-import { useEffect, RefObject } from 'react';
+import { RefObject, useEffect } from 'react';
 import { useAtomValue } from 'jotai';
-import {
-  objectsAtom,
-  cameraAtom,
-  modeAtom,
-  measurePointsAtom,
-  mouseWorldPosAtom,
-  // ★★★ 修正点: allDimensionsAtom をインポート ★★★
+import { 
+  objectsAtom, 
+  cameraAtom, 
+  modeAtom, 
+  selectedObjectIdAtom, // 追加
+  dragStateAtom, // 必要に応じて
   allDimensionsAtom
-} from '@/lib/jotai-store'; 
-import { drawGrid, drawObjects, drawAllSnapPoints, drawMeasureTool, drawDimensions } from '@/lib/canvas-utils'; 
+} from '@/lib/jotai-store';
+import { 
+  drawGrid, 
+  drawObjects, 
+  drawAllSnapPoints, 
+  drawMeasureTool, 
+  drawDimensions 
+} from '@/lib/canvas-utils';
 
 export const useCanvas = (canvasRef: RefObject<HTMLCanvasElement>) => {
   const objects = useAtomValue(objectsAtom);
   const camera = useAtomValue(cameraAtom);
   const mode = useAtomValue(modeAtom);
-  const measurePoints = useAtomValue(measurePointsAtom);
-  const mouseWorldPos = useAtomValue(mouseWorldPosAtom);
-  
-  // ★★★ 修正点: dimensionsAtom -> allDimensionsAtom に変更 ★★★
+  const selectedObjectId = useAtomValue(selectedObjectIdAtom); // 選択中のIDを取得
   const dimensions = useAtomValue(allDimensionsAtom);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    if (!camera || typeof camera.zoom !== 'number') {
-        console.warn('[useCanvas] Skipping draw in useEffect because camera is not ready yet.', camera);
-        return;
-    }
-
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const draw = () => {
-      if (!camera || typeof camera.zoom !== 'number') {
-          console.error('[useCanvas] draw() called but camera is invalid!', camera);
-          return;
-      }
+    // キャンバスサイズに合わせて描画領域をクリア
+    const canvasWidth = canvas.width;
+    const canvasHeight = canvas.height;
+    ctx.clearRect(0, 0, canvasWidth, canvasHeight);
 
-      const canvasWidth = ctx.canvas.width;  
-      const canvasHeight = ctx.canvas.height; 
+    // 描画設定の保存
+    ctx.save();
 
-      ctx.save();
-      ctx.clearRect(0, 0, canvasWidth, canvasHeight); 
-      
-      ctx.translate(canvasWidth / 2, canvasHeight / 2);
-      ctx.scale(camera.zoom, camera.zoom);
-      ctx.translate(-canvasWidth / 2 + camera.x, -canvasHeight / 2 + camera.y);
+    // 背景（グリッド）を描画
+    // ★修正: 引数に canvasWidth, canvasHeight を追加
+    drawGrid(ctx, camera, canvasWidth, canvasHeight);
 
-      drawGrid(ctx, camera);
-      drawObjects(ctx, objects, camera);
-      drawAllSnapPoints(ctx, objects, camera);
-      
-      // (dimensions には自動計算された赤い線と、手動の青い線の両方が入る)
-      drawDimensions(ctx, dimensions, objects, camera);
+    // ダクトオブジェクトの描画
+    // ★修正: 第4引数に selectedObjectId を追加
+    drawObjects(ctx, objects, camera, selectedObjectId);
 
-      if (mode === 'measure') {
-        drawMeasureTool(ctx, measurePoints, mouseWorldPos, camera, objects);
-      }
+    // デバッグ用: スナップポイントの表示（必要に応じてON/OFF）
+    // drawAllSnapPoints(ctx, objects, camera);
 
-      ctx.restore();
-    };
+    // 寸法線の描画
+    drawDimensions(ctx, dimensions, objects, camera);
 
-    draw();
+    // 計測ツールの描画 (モードがmeasureの場合など)
+    if (mode === 'measure') {
+      // 計測ツールの描画ロジックが必要ならここに記述
+      // drawMeasureTool(...)
+    }
 
-  // ★★★ 修正点: 依存配列を allDimensionsAtom (の実体は dimensions) に変更 ★★★
-  }, [objects, camera, mode, measurePoints, mouseWorldPos, dimensions, canvasRef]);
+    ctx.restore();
+
+  }, [objects, camera, mode, selectedObjectId, dimensions, canvasRef]); // 依存配列に追加
 };

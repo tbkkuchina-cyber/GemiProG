@@ -27,11 +27,11 @@ const ContextMenu = ({ isOpen, position }: ContextMenuProps) => {
 
   if (!isOpen || !selectedObject) return null;
 
-  const isFlippable = selectedObject.type === 'AdjustableElbow' ||
-    selectedObject.type === 'TeeReducer' ||
-    selectedObject.type === 'YBranch' ||
-    selectedObject.type === 'YBranchReducer' ||
-    selectedObject.type === 'Reducer';
+  const isFlippable = selectedObject.type === DuctPartType.AdjustableElbow ||
+    selectedObject.type === DuctPartType.TeeReducer ||
+    selectedObject.type === DuctPartType.YBranch ||
+    selectedObject.type === DuctPartType.YBranchReducer ||
+    selectedObject.type === DuctPartType.Reducer;
 
   const isInGroup = objects.some(o => o.id !== selectedObject.id && o.groupId === selectedObject.groupId);
 

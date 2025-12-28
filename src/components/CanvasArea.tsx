@@ -1,17 +1,27 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { Stage, Layer, Line, Circle, Text, Group, Arc, Image as KonvaImage } from 'react-konva';
+import dynamic from 'next/dynamic'; // next/dynamicをインポート
 import { useAtom, useAtomValue, useSetAtom } from 'jotai';
 import { v4 as uuidv4 } from 'uuid';
-import {
-  cameraAtom, modeAtom, objectsAtom,
+import { 
+  cameraAtom, modeAtom, objectsAtom, 
   backgroundImageAtom, backgroundConfigAtom, drawingScaleAtom,
   calibrationModeAtom, calibrationPointsAtom,
   activeToolAtom, drawingStartPointAtom, drawingEndPointAtom,
-  saveStateAtom, currentDiameterAtom
+  saveStateAtom, currentDiameterAtom 
 } from '@/lib/jotai-store';
 import { DuctPartType } from '@/lib/types';
+
+// react-konva のコンポーネントをクライアントサイドでのみロード
+const Stage = dynamic(() => import('react-konva').then(mod => mod.Stage), { ssr: false });
+const Layer = dynamic(() => import('react-konva').then(mod => mod.Layer), { ssr: false });
+const Line = dynamic(() => import('react-konva').then(mod => mod.Line), { ssr: false });
+const Circle = dynamic(() => import('react-konva').then(mod => mod.Circle), { ssr: false });
+const Text = dynamic(() => import('react-konva').then(mod => mod.Text), { ssr: false });
+const Group = dynamic(() => import('react-konva').then(mod => mod.Group), { ssr: false });
+const Arc = dynamic(() => import('react-konva').then(mod => mod.Arc), { ssr: false });
+const KonvaImage = dynamic(() => import('react-konva').then(mod => mod.Image), { ssr: false });
 
 // --- サブコンポーネント: 個別のダクト描画を担当 ---
 const DuctObjectRenderer = ({ part, isSelected, drawingScale, zoom, onSelect }: any) => {
