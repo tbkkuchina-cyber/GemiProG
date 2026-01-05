@@ -1,140 +1,160 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
-import dynamic from 'next/dynamic'; // next/dynamicをインポート
+import React, { useEffect, useState, useRef, useCallback } from 'react';
+import { Stage, Layer, Line, Circle, Text, Group, Image as KonvaImage } from 'react-konva';
 import { useAtom, useAtomValue, useSetAtom } from 'jotai';
 import { v4 as uuidv4 } from 'uuid';
-import { 
-  cameraAtom, modeAtom, objectsAtom, 
+import {
+  cameraAtom, modeAtom, objectsAtom,
   backgroundImageAtom, backgroundConfigAtom, drawingScaleAtom,
   calibrationModeAtom, calibrationPointsAtom,
   activeToolAtom, drawingStartPointAtom, drawingEndPointAtom,
-  saveStateAtom, currentDiameterAtom 
+  saveStateAtom, currentDiameterAtom, selectedObjectIdAtom,
+  allDimensionsAtom, addDimensionAtom, // ★追加
+  isDimensionModalOpenAtom, dimensionModalContentAtom // ★追加
 } from '@/lib/jotai-store';
-import { DuctPartType } from '@/lib/types';
+import { DuctPartType, FittingItem, AnyDuctPart, StraightDuct, Point, Dimension } from '@/lib/types';
+import { screenToWorld, distance, getSnapPoints, createDuctPart } from '@/lib/duct-calculations';
+import { getPointForDim } from '@/lib/canvas-utils'; // ★追加
 
-// react-konva のコンポーネントをクライアントサイドでのみロード
-const Stage = dynamic(() => import('react-konva').then(mod => mod.Stage), { ssr: false });
-const Layer = dynamic(() => import('react-konva').then(mod => mod.Layer), { ssr: false });
-const Line = dynamic(() => import('react-konva').then(mod => mod.Line), { ssr: false });
-const Circle = dynamic(() => import('react-konva').then(mod => mod.Circle), { ssr: false });
-const Text = dynamic(() => import('react-konva').then(mod => mod.Text), { ssr: false });
-const Group = dynamic(() => import('react-konva').then(mod => mod.Group), { ssr: false });
-const Arc = dynamic(() => import('react-konva').then(mod => mod.Arc), { ssr: false });
-const KonvaImage = dynamic(() => import('react-konva').then(mod => mod.Image), { ssr: false });
+const SNAP_THRESHOLD = 15;
 
-// --- サブコンポーネント: 個別のダクト描画を担当 ---
-const DuctObjectRenderer = ({ part, isSelected, drawingScale, zoom, onSelect }: any) => {
+// --- サブコンポーネント: 個別のダクト描画 (変更なし) ---
+const DuctObjectRenderer = ({ part, isSelected, drawingScale, zoom, onSelect, onDragStart, onDragMove, onDragEnd }: any) => {
+  // ... (前回のコードと同じ内容) ...
   const strokeWidth = (part.diameter / drawingScale) * 0.8;
-  
   const getDuctColor = (diameter: number) => {
     if (diameter <= 150) return '#4CAF50'; 
     if (diameter <= 250) return '#2196F3'; 
     return '#FFC107'; 
   };
   const color = getDuctColor(part.diameter);
+  const draggable = true;
 
-  // 1. 直管 (Straight)
   if (part.type === DuctPartType.Straight) {
+    const pts = part.points || [];
+    if (pts.length < 2) return null;
     return (
-      <Group onClick={(e) => onSelect(e, part)} onTap={(e) => onSelect(e, part)}>
+      <Group 
+        id={part.id}
+        onClick={(e) => onSelect(e, part)} 
+        onTap={(e) => onSelect(e, part)}
+        draggable={draggable}
+        onDragStart={onDragStart}
+        onDragMove={onDragMove}
+        onDragEnd={onDragEnd}
+      >
         <Line
-          points={part.points.flatMap((p: any) => [p.x, p.y])}
+          points={pts.flatMap((p: any) => [p.x, p.y])}
           stroke={color} strokeWidth={strokeWidth} opacity={0.9} lineCap="round"
           shadowColor={isSelected ? '#fff' : 'transparent'} shadowBlur={10}
         />
-        <Line points={part.points.flatMap((p: any) => [p.x, p.y])} stroke="white" strokeWidth={1/zoom} dash={[10, 5]} />
-        <Circle x={part.points[0].x} y={part.points[0].y} radius={3/zoom} fill="yellow" />
-        <Circle x={part.points[1].x} y={part.points[1].y} radius={3/zoom} fill="yellow" />
+        <Line points={pts.flatMap((p: any) => [p.x, p.y])} stroke="white" strokeWidth={1/zoom} dash={[10, 5]} />
+        <Circle x={pts[0].x} y={pts[0].y} radius={3/zoom} fill="yellow" />
+        <Circle x={pts[1].x} y={pts[1].y} radius={3/zoom} fill="yellow" />
         <Text 
-          x={(part.points[0].x + part.points[1].x) / 2} y={(part.points[0].y + part.points[1].y) / 2} 
+          x={(pts[0].x + pts[1].x) / 2} y={(pts[0].y + pts[1].y) / 2} 
           text={`φ${part.diameter} L${part.length}`} fontSize={12/zoom} fill="white" stroke="black" strokeWidth={0.5}
         />
       </Group>
     );
   }
 
-  // 2. エルボ (Elbow90)
-  if (part.type === DuctPartType.Elbow90) {
-    const radiusPx = (part.diameter / drawingScale);
-    return (
-      <Group
-        x={part.points[0].x} y={part.points[0].y} rotation={part.rotation || 0}
-        onClick={(e) => onSelect(e, part)} onTap={(e) => onSelect(e, part)}
-      >
-        <Arc
-          innerRadius={radiusPx * 0.5} outerRadius={radiusPx * 1.5} angle={90}
-          fill={color} opacity={0.9} shadowColor={isSelected ? '#fff' : 'transparent'} shadowBlur={10}
-        />
-        <Text x={radiusPx * 0.5} y={radiusPx * 0.5} text={`φ${part.diameter} EL`} fontSize={10/zoom} fill="white" rotation={-45} />
-      </Group>
-    );
-  }
-
-  // 3. レジューサ (Reducer) - 台形描画
-  if (part.type === DuctPartType.Reducer) {
-    const w1 = (part.diameter / drawingScale); // 入口幅
-    const w2 = ((part.diameter2 || part.diameter * 0.75) / drawingScale); // 出口幅
-    const len = (300 / drawingScale); // 既定長さ300mm相当
-    
-    return (
-      <Group
-        x={part.points[0].x} y={part.points[0].y} rotation={part.rotation || 0}
-        onClick={(e) => onSelect(e, part)} onTap={(e) => onSelect(e, part)}
-      >
-        {/* 台形を描画 (Lineで閉じた形状を作る) */}
-        <Line
-          points={[
-            0, -w1/2,  // 左上
-            len, -w2/2, // 右上
-            len, w2/2,  // 右下
-            0, w1/2    // 左下
-          ]}
-          closed
-          fill={color} opacity={0.9} stroke="white" strokeWidth={1/zoom}
-          shadowColor={isSelected ? '#fff' : 'transparent'} shadowBlur={10}
-        />
-        <Text x={len/2} y={-10/zoom} text={`R ${part.diameter}x${part.diameter2||'?'}`} fontSize={10/zoom} fill="white" />
-      </Group>
-    );
-  }
-
-  // 4. T管 (Tee)
-  if (part.type === DuctPartType.Tee) {
-    const mainW = (part.diameter / drawingScale);
-    const len = (400 / drawingScale); // 全長
-    const branchLen = (200 / drawingScale); // 分岐長さ
-    
-    return (
-      <Group
-        x={part.points[0].x} y={part.points[0].y} rotation={part.rotation || 0}
-        onClick={(e) => onSelect(e, part)} onTap={(e) => onSelect(e, part)}
-      >
-        {/* 主管 */}
-        <Line
-          points={[-len/2, 0, len/2, 0]}
-          stroke={color} strokeWidth={mainW} lineCap="butt"
-          shadowColor={isSelected ? '#fff' : 'transparent'} shadowBlur={10}
-        />
-        {/* 分岐管 */}
-        <Line
-          points={[0, 0, 0, branchLen]}
-          stroke={color} strokeWidth={mainW} lineCap="butt"
-        />
-        <Text x={0} y={0} text={`Tee φ${part.diameter}`} fontSize={10/zoom} fill="white" />
-      </Group>
-    );
-  }
-
-  return null;
+  const p = part.points && part.points[0] ? part.points[0] : { x: part.x, y: part.y };
+  
+  return (
+    <Group
+      id={part.id}
+      x={p.x} y={p.y} 
+      rotation={part.rotation || 0}
+      onClick={(e) => onSelect(e, part)} 
+      onTap={(e) => onSelect(e, part)}
+      draggable={draggable}
+      onDragStart={onDragStart}
+      onDragMove={onDragMove}
+      onDragEnd={onDragEnd}
+    >
+      <Circle radius={(part.diameter/drawingScale)/2} fill={color} opacity={0.8} />
+      {isSelected && <Circle radius={(part.diameter/drawingScale)/2 + 2} stroke="#fff" strokeWidth={2} />}
+      <Text text={part.type} fontSize={10/zoom} fill="white" x={-10} y={-5} />
+    </Group>
+  );
 };
+
+// --- ★修正: 寸法線レンダラー (イベント追加) ---
+const DimensionRenderer = ({ dim, objects, zoom }: { dim: Dimension, objects: AnyDuctPart[], zoom: number }) => {
+    const setIsModalOpen = useSetAtom(isDimensionModalOpenAtom); // ★追加
+    const setModalContent = useSetAtom(dimensionModalContentAtom); // ★追加
+
+    const p1 = getPointForDim(dim.p1_objId, dim.p1_pointType, String(dim.p1_pointId), objects);
+    const p2 = getPointForDim(dim.p2_objId, dim.p2_pointType, String(dim.p2_pointId), objects);
+
+    if (!p1 || !p2) return null;
+
+    const cx = (p1.x + p2.x) / 2;
+    const cy = (p1.y + p2.y) / 2;
+    
+    // ダブルクリック時のハンドラ
+    const handleDblClick = (e: any) => {
+        e.cancelBubble = true; // バブリング停止
+        
+        // 直管の長さを制御している寸法線かどうか判定
+        // (簡易判定: p1とp2が同じオブジェクトIDなら、それは直管自身の長さ)
+        const isSelfDimension = dim.p1_objId === dim.p2_objId;
+        
+        setModalContent({
+            currentValue: dim.value,
+            // 寸法線が直管自身の長さを表している場合、そのIDを渡して更新可能にする
+            ductToUpdateId: isSelfDimension ? dim.p1_objId : undefined,
+            isManual: dim.isManual
+        });
+        setIsModalOpen(true);
+    };
+
+    return (
+        <Group 
+            onDblClick={handleDblClick} // PC用
+            onTap={handleDblClick}      // タッチ用 (ダブルタップ判定が必要だが簡易的にタップで代用可、または別途実装)
+            onMouseEnter={(e) => { e.target.getStage()!.container().style.cursor = 'pointer'; }}
+            onMouseLeave={(e) => { e.target.getStage()!.container().style.cursor = 'default'; }}
+        >
+            {/* ヒット判定用の透明な太い線 */}
+            <Line points={[p1.x, p1.y, p2.x, p2.y]} stroke="transparent" strokeWidth={10/zoom} />
+            
+            {/* 可視線 */}
+            <Line points={[p1.x, p1.y, p2.x, p2.y]} stroke="#3b82f6" strokeWidth={1.5/zoom} />
+            <Circle x={p1.x} y={p1.y} radius={3/zoom} fill="#3b82f6" />
+            <Circle x={p2.x} y={p2.y} radius={3/zoom} fill="#3b82f6" />
+            
+            {/* 数値ラベル */}
+            <Group x={cx} y={cy}>
+                {/* 背景（読みやすくするため） */}
+                <Text 
+                    text={`${Math.round(dim.value)}mm`} 
+                    fontSize={12/zoom} 
+                    fill="#1e3a8a" 
+                    align="center"
+                    verticalAlign="middle"
+                    offsetX={20}
+                    offsetY={6}
+                    padding={2}
+                    fillAfterStrokeEnabled={true}
+                />
+            </Group>
+        </Group>
+    );
+};
+
 
 // --- メインコンポーネント ---
 const CanvasArea = () => {
   const [camera, setCamera] = useAtom(cameraAtom);
   const [mode, setMode] = useAtom(modeAtom);
   const [objects, setObjects] = useAtom(objectsAtom);
+  const dimensions = useAtomValue(allDimensionsAtom); // ★追加
+  const addDimension = useSetAtom(addDimensionAtom); // ★追加
   const saveState = useSetAtom(saveStateAtom);
+  const setSelectedObjectId = useSetAtom(selectedObjectIdAtom);
   
   const bgImage = useAtomValue(backgroundImageAtom);
   const bgConfig = useAtomValue(backgroundConfigAtom);
@@ -151,12 +171,21 @@ const CanvasArea = () => {
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [stageSize, setStageSize] = useState({ w: 800, h: 600 });
+  
+  const [snapIndicator, setSnapIndicator] = useState<{x: number, y: number} | null>(null);
+
+  // ★追加: 寸法作成用の一時ステート
+  const [dimStartObj, setDimStartObj] = useState<{id: string, pointId: number|string} | null>(null);
+
+  const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    setStageSize({ w: window.innerWidth, h: window.innerHeight });
-    const handleResize = () => setStageSize({ w: window.innerWidth, h: window.innerHeight });
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    if (typeof window !== 'undefined') {
+      setStageSize({ w: window.innerWidth, h: window.innerHeight });
+      const handleResize = () => setStageSize({ w: window.innerWidth, h: window.innerHeight });
+      window.addEventListener('resize', handleResize);
+      return () => window.removeEventListener('resize', handleResize);
+    }
   }, []);
 
   const getWorldPos = (stage: any) => {
@@ -168,22 +197,142 @@ const CanvasArea = () => {
     };
   };
 
-  // --- イベントハンドラ ---
+  // ... (handleDragOver, handleDrop は変更なし) ...
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    const itemJson = e.dataTransfer.getData('application/json');
+    if (!itemJson) return;
+
+    try {
+        const item = JSON.parse(itemJson) as FittingItem;
+        const rect = containerRef.current?.getBoundingClientRect();
+        if (!rect) return;
+
+        const screenPoint = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+        const worldPoint = screenToWorld(screenPoint, containerRef.current!, camera);
+
+        const systemName = 'SA-1';
+        const defaultDiameter = item.diameter || currentDiameter || 200;
+
+        const baseProps = {
+            id: uuidv4(),
+            groupId: uuidv4(),
+            x: worldPoint.x,
+            y: worldPoint.y,
+            rotation: 0,
+            isSelected: true,
+            isFlipped: false,
+            systemName: systemName,
+            name: item.name || 'Unnamed',
+            diameter: defaultDiameter
+        };
+
+        let newPart: AnyDuctPart;
+
+        if (item.type === DuctPartType.Straight) {
+             const len = item.length || 400;
+             newPart = {
+                ...baseProps,
+                type: DuctPartType.Straight,
+                length: len,
+                points: [{x: worldPoint.x, y: worldPoint.y}, {x: worldPoint.x + len, y: worldPoint.y}]
+            } as StraightDuct;
+        } else {
+            newPart = {
+                ...baseProps,
+                type: item.type,
+                points: [{x: worldPoint.x, y: worldPoint.y}]
+            } as AnyDuctPart;
+        }
+
+        setObjects((prev: AnyDuctPart[]) => [...prev, newPart]);
+        setSelectedObjectId(newPart.id);
+        saveState();
+    } catch (err) {
+        console.error("Drop failed:", err);
+    }
+  };
+
+
+  // ... (handleObjectDragStart, handleObjectDragMove, handleObjectDragEnd は変更なし) ...
+  const handleObjectDragStart = (e: any) => {
+    const id = e.target.id();
+    setSelectedId(id);
+    setSelectedObjectId(id);
+  };
+
+  const handleObjectDragMove = (e: any) => {
+    const target = e.target;
+    const targetId = target.id();
+    const pos = { x: target.x(), y: target.y() };
+    
+    let bestSnap: { x: number, y: number } | null = null;
+    let minDidst = SNAP_THRESHOLD / camera.zoom;
+
+    for (const obj of objects) {
+      if (obj.id === targetId) continue;
+      const snaps = getSnapPoints(obj);
+      for (const sp of snaps) {
+        const d = distance(pos, sp);
+        if (d < minDidst) {
+          minDidst = d;
+          bestSnap = sp;
+        }
+      }
+    }
+
+    if (bestSnap) {
+      target.position({ x: bestSnap.x, y: bestSnap.y });
+      setSnapIndicator(bestSnap);
+    } else {
+      setSnapIndicator(null);
+    }
+  };
+
+
+  const handleObjectDragEnd = (e: any) => {
+    const target = e.target;
+    const targetId = target.id();
+    const finalPos = { x: target.x(), y: target.y() };
+    setSnapIndicator(null);
+    setObjects(prev => prev.map(obj => {
+      if (obj.id === targetId) {
+        if (obj.type === DuctPartType.Straight && obj.points) {
+           const dx = finalPos.x;
+           const dy = finalPos.y; 
+           const newPoints = obj.points.map(p => ({ x: p.x + dx, y: p.y + dy }));
+           target.position({ x: 0, y: 0 });
+           return { ...obj, points: newPoints };
+        } else {
+           return { ...obj, x: finalPos.x, y: finalPos.y };
+        }
+      }
+      return obj;
+    }));
+    saveState();
+  };
+
+
+  // --- マウスイベントハンドラ (修正: 寸法ツール対応) ---
 
   const handleMouseDown = (e: any) => {
     const stage = e.target.getStage();
     const pos = getWorldPos(stage);
 
-    // 1. キャリブレーション
+    // 1. 縮尺設定モード
     if (isCalibrating) {
+      // ... (前回のコードと同じ) ...
       const newPoints = [...calibPoints, pos];
       setCalibPoints(newPoints);
       if (newPoints.length === 2) {
         const dx = newPoints[1].x - newPoints[0].x;
         const dy = newPoints[1].y - newPoints[0].y;
         const pixelDist = Math.sqrt(dx * dx + dy * dy);
-        
-        // requestAnimationFrameで遅延させないとpromptがイベントをブロックすることがあるため
         setTimeout(() => {
             const realDistStr = prompt(`実際の距離(mm)を入力:\n(Pixel: ${pixelDist.toFixed(1)}px)`);
             if (realDistStr) {
@@ -200,16 +349,70 @@ const CanvasArea = () => {
       return;
     }
 
-    // 2. 作図開始
+    // 2. 直管描画モード
     if (activeTool === 'straight') {
       setDrawStart(pos);
       setDrawEnd(pos);
       return;
     }
 
-    // 3. 選択解除
+    // 3. ★追加: 寸法作成モード
+    if (activeTool === 'dimension') {
+        // クリックした場所に近いオブジェクトのスナップポイントを探す
+        let clickedObjId: string | null = null;
+        let clickedPointId: number | string = 0;
+        let minDist = 20 / camera.zoom;
+
+        objects.forEach(obj => {
+            const snaps = getSnapPoints(obj);
+            snaps.forEach((sp, idx) => {
+                const d = distance(pos, sp);
+                if (d < minDist) {
+                    minDist = d;
+                    clickedObjId = obj.id;
+                    clickedPointId = idx;
+                }
+            });
+        });
+
+        if (clickedObjId) {
+            if (!dimStartObj) {
+                // 1点目セット
+                setDimStartObj({ id: clickedObjId, pointId: clickedPointId });
+            } else {
+                // 2点目セット -> 寸法作成
+                const p1 = getPointForDim(dimStartObj.id, 'connector', String(dimStartObj.pointId), objects);
+                const p2 = getPointForDim(clickedObjId, 'connector', String(clickedPointId), objects);
+                
+                if (p1 && p2) {
+                    const dist = distance(p1, p2) * drawingScale; // 実寸計算
+                    const newDim: Dimension = {
+                        id: uuidv4(),
+                        p1_objId: dimStartObj.id,
+                        p1_pointId: dimStartObj.pointId,
+                        p1_pointType: 'connector',
+                        p2_objId: clickedObjId!,
+                        p2_pointId: clickedPointId,
+                        p2_pointType: 'connector',
+                        value: dist,
+                        isManual: true
+                    };
+                    addDimension(newDim);
+                }
+                setDimStartObj(null); // リセット
+            }
+        } else {
+            // 何もないところをクリックしたらキャンセル
+            setDimStartObj(null);
+        }
+        return;
+    }
+
+    // 4. 選択解除
     if (e.target === stage) {
       setSelectedId(null);
+      setSelectedObjectId(null);
+      setDimStartObj(null);
     }
   };
 
@@ -218,6 +421,7 @@ const CanvasArea = () => {
     const pos = getWorldPos(stage);
     setMousePos(pos);
 
+    // 直管描画中のガイド更新
     if (drawStart) {
       if (e.evt.shiftKey) {
         const dx = Math.abs(pos.x - drawStart.x);
@@ -234,6 +438,7 @@ const CanvasArea = () => {
   };
 
   const handleMouseUp = () => {
+    // 直管の作成完了処理 (前回のコードと同じ) 
     if (drawStart && drawEnd && activeTool === 'straight') {
       const dx = drawEnd.x - drawStart.x;
       const dy = drawEnd.y - drawStart.y;
@@ -241,15 +446,21 @@ const CanvasArea = () => {
 
       if (distPx > 5) {
         const lengthMm = distPx * drawingScale;
-        const newDuct: any = {
+        const newDuct: StraightDuct = {
           id: uuidv4(),
+          groupId: uuidv4(),
           type: DuctPartType.Straight,
-          system: 'SA',
+          systemName: 'SA',
+          name: 'Straight',
           diameter: currentDiameter,
           length: Math.round(lengthMm),
+          x: drawStart.x, y: drawStart.y,
+          rotation: 0,
+          isSelected: false,
+          isFlipped: false,
           points: [drawStart, drawEnd]
         };
-        setObjects([...objects, newDuct]);
+        setObjects((prev: AnyDuctPart[]) => [...prev, newDuct]);
         saveState();
       }
       setDrawStart(null);
@@ -257,7 +468,6 @@ const CanvasArea = () => {
     }
   };
 
-  // ★ 修正: 以前のエラー原因だった handleWheel を定義
   const handleWheel = (e: any) => {
     e.evt.preventDefault();
     const scaleBy = 1.1;
@@ -266,25 +476,25 @@ const CanvasArea = () => {
   };
 
   const handleObjectClick = (e: any, part: any) => {
+    // 寸法モード中はオブジェクト選択しない（スナップを優先）
+    if (activeTool === 'dimension') return; 
+    
     e.cancelBubble = true;
     setSelectedId(part.id);
-    // エルボの場合は回転させる
-    if (part.type === DuctPartType.Elbow90 && activeTool === 'select') {
-       const newObjects = objects.map((obj: any) => {
-         if (obj.id === part.id) {
-           return { ...obj, rotation: (obj.rotation || 0) + 90 };
-         }
-         return obj;
-       });
-       setObjects(newObjects);
-    }
+    setSelectedObjectId(part.id);
   };
 
   return (
-    <div className={`flex-1 bg-gray-800 relative overflow-hidden ${activeTool === 'straight' ? 'cursor-crosshair' : ''}`}>
+    <div 
+      ref={containerRef}
+      className={`flex-1 bg-gray-800 relative overflow-hidden ${activeTool === 'straight' || activeTool === 'dimension' ? 'cursor-crosshair' : ''}`}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+    >
       <div className="absolute top-4 left-4 z-50 flex gap-2">
          {isCalibrating && <div className="bg-yellow-500 px-3 py-1 rounded shadow font-bold animate-pulse">縮尺設定中</div>}
          {activeTool === 'straight' && <div className="bg-blue-500 text-white px-3 py-1 rounded shadow font-bold">作図モード: φ{currentDiameter} (Shiftで直交)</div>}
+         {activeTool === 'dimension' && <div className="bg-green-500 text-white px-3 py-1 rounded shadow font-bold">寸法モード: 2点をクリック {dimStartObj ? '(1点目選択済み)' : ''}</div>}
       </div>
 
       <Stage
@@ -298,8 +508,12 @@ const CanvasArea = () => {
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
-        onWheel={handleWheel} // 定義した関数を使用
-        onDragEnd={(e) => { if(!drawStart) setCamera({ ...camera, x: e.target.x(), y: e.target.y() }) }}
+        onWheel={handleWheel}
+        onDragEnd={(e) => { 
+            if (e.target === e.target.getStage()) {
+                if(!drawStart) setCamera({ ...camera, x: e.target.x(), y: e.target.y() });
+            }
+        }}
       >
         <Layer>
           {bgImage && (
@@ -322,7 +536,7 @@ const CanvasArea = () => {
              ))}
           </Group>
 
-          {/* オブジェクト描画: サブコンポーネントを使用して記述ミスを防止 */}
+          {/* 部材の描画 */}
           {objects.map((part: any) => (
             <DuctObjectRenderer
               key={part.id}
@@ -331,9 +545,35 @@ const CanvasArea = () => {
               drawingScale={drawingScale}
               zoom={camera.zoom}
               onSelect={handleObjectClick}
+              onDragStart={handleObjectDragStart}
+              onDragMove={handleObjectDragMove}
+              onDragEnd={handleObjectDragEnd}
             />
           ))}
 
+          {/* ★追加: 寸法線の描画 */}
+          {dimensions.map(dim => (
+              <DimensionRenderer 
+                  key={dim.id} 
+                  dim={dim} 
+                  objects={objects} 
+                  zoom={camera.zoom} 
+              />
+          ))}
+
+          {/* スナップガイド */}
+          {snapIndicator && (
+             <Circle 
+               x={snapIndicator.x} 
+               y={snapIndicator.y} 
+               radius={8 / camera.zoom} 
+               stroke="#FF00FF" 
+               strokeWidth={2 / camera.zoom} 
+               dash={[4, 2]} 
+             />
+          )}
+
+          {/* 直管描画中のガイド */}
           {drawStart && drawEnd && (
             <Group>
                <Line

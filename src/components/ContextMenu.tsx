@@ -1,5 +1,6 @@
 'use client';
 
+import React from 'react';
 import { useSetAtom, useAtomValue } from 'jotai';
 import { RotateCw, FlipHorizontal, Trash2, Link2Off } from 'lucide-react';
 import { DuctPartType } from '@/lib/types';
@@ -27,30 +28,51 @@ const ContextMenu = ({ isOpen, position }: ContextMenuProps) => {
 
   if (!isOpen || !selectedObject) return null;
 
+  // 反転可能な部材かどうか判定
   const isFlippable = selectedObject.type === DuctPartType.AdjustableElbow ||
     selectedObject.type === DuctPartType.TeeReducer ||
     selectedObject.type === DuctPartType.YBranch ||
     selectedObject.type === DuctPartType.YBranchReducer ||
     selectedObject.type === DuctPartType.Reducer;
 
-  const isInGroup = objects.some(o => o.id !== selectedObject.id && o.groupId === selectedObject.groupId);
-
   return (
     <div
-      className="absolute bg-white shadow-lg rounded-md p-1 flex items-center space-x-1 z-20"
+      className="absolute bg-white shadow-lg rounded-md p-1 flex items-center space-x-1 z-50 border border-gray-200"
       style={{ left: position.x, top: position.y }}
     >
-      <button onClick={() => rotateSelectedObject()} title="回転 (R)" className="p-2 rounded-md hover:bg-gray-200">
-        <RotateCw size={20} />
+      <button 
+        onClick={() => rotateSelectedObject()} 
+        title="回転 (R)" 
+        className="p-2 rounded-md hover:bg-gray-100 text-gray-700"
+      >
+        <RotateCw size={18} />
       </button>
-      <button onClick={() => flipSelectedObject()} title="反転" className="p-2 rounded-md hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed" disabled={!isFlippable}>
-        <FlipHorizontal size={20} />
+
+      <button 
+        onClick={() => flipSelectedObject()} 
+        title="反転 (F)" 
+        className={`p-2 rounded-md hover:bg-gray-100 text-gray-700 ${!isFlippable ? 'opacity-30 cursor-not-allowed' : ''}`} 
+        disabled={!isFlippable}
+      >
+        <FlipHorizontal size={18} />
       </button>
-      <button onClick={() => deleteSelectedObject()} title="削除 (Delete)" className="p-2 rounded-md hover:bg-gray-200 text-red-600">
-        <Trash2 size={20} />
+
+      <div className="w-px h-6 bg-gray-200 mx-1"></div>
+
+      <button 
+        onClick={() => disconnectSelectedObject()} 
+        title="接続解除" 
+        className="p-2 rounded-md hover:bg-gray-100 text-gray-700"
+      >
+        <Link2Off size={18} />
       </button>
-      <button onClick={() => disconnectSelectedObject()} title="接合を解除" className="p-2 rounded-md hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed" disabled={!isInGroup}>
-        <Link2Off size={20} />
+
+      <button 
+        onClick={() => deleteSelectedObject()} 
+        title="削除 (Delete)" 
+        className="p-2 rounded-md hover:bg-red-50 text-red-600"
+      >
+        <Trash2 size={18} />
       </button>
     </div>
   );

@@ -1,273 +1,263 @@
 'use client';
 
 import { useAtomValue, useSetAtom } from 'jotai';
-import { useEffect, useState, useMemo, useRef } from "react";
-import { X, Plus, Trash2 } from "lucide-react";
-import { FittingItem, Fittings, DuctPartType } from "@/lib/types";
+import { useEffect, useState, useRef } from "react";
+import { X, Plus, Trash2, Save, RotateCcw } from "lucide-react";
+import { FittingItem, DuctPartType } from "@/lib/types";
 import {
   isFittingsModalOpenAtom,
   closeFittingsModalAtom,
   fittingsAtom,
-  setFittingsAtom,
   saveFittingsAtom
 } from '@/lib/jotai-store';
+import { getDefaultFittings } from '@/lib/default-fittings';
 
-// Helper function
-const generateNameFromDiameters = (item: FittingItem): string => {
-    const d1 = item.diameter || 0;
-    const d2 = (item as any).diameter2 || 0;
-    const d3 = (item as any).diameter3 || 0;
-
-    if (item.type === DuctPartType.TeeReducer || item.type === DuctPartType.YBranchReducer) {
-        return `D${d1}-${d2}-${d3}`;
-    }
-    if (item.type === DuctPartType.Reducer) {
-        return `D${d1}-${d2}`;
-    }
-    return `D${d1}`;
-};
-
-// Props definition
-interface FittingCategoryEditorProps {
-  category: string;
-  items: FittingItem[];
-  onInputChange: (category: string, index: number, prop: string, value: any) => void;
-  onDeleteRow: (category: string, index: number) => void;
-  onAddRow: (category: string) => void;
-}
-
-// Sub-component
-const FittingCategoryEditor = ({ category, items, onInputChange, onDeleteRow, onAddRow }: FittingCategoryEditorProps) => {
-    const headers = useMemo(() => {
-        const headerSet = new Set<string>();
-        items.forEach(item => { Object.keys(item).forEach(key => headerSet.add(key)); });
-        headerSet.delete('id'); headerSet.delete('type');
-        const sortedHeaders = Array.from(headerSet).sort((a, b) => {
-            const order = ['name', 'visible', 'diameter', 'diameter2', 'diameter3', 'length', 'branchLength', 'legLength', 'angle', 'intersectionOffset'];
-            const indexA = order.indexOf(a); const indexB = order.indexOf(b);
-            if (indexA !== -1 && indexB !== -1) return indexA - indexB;
-            if (indexA !== -1) return -1; if (indexB !== -1) return 1;
-            return a.localeCompare(b);
-        });
-        return sortedHeaders;
-    }, [items]);
-    
-    const headerLabelMap: Record<string, string> = { name: '名前', visible: '表示', diameter: '直径', diameter2: '直径2', diameter3: '直径3', length: '主管長', branchLength: '枝長', legLength: '脚長', angle: '角度', intersectionOffset: '交差オフセット' };
-
-    const renderEditableCell = (item: FittingItem, index: number, prop: string) => {
-        const value = (item as any)[prop];
-        const isNameReadOnly = prop === 'name' && (
-            item.type === DuctPartType.TeeReducer ||
-            item.type === DuctPartType.YBranchReducer ||
-            item.type === DuctPartType.Reducer ||
-            item.type === DuctPartType.Elbow90 || 
-            item.type === DuctPartType.AdjustableElbow || 
-            item.type === DuctPartType.Damper 
-        );
-        const isReadOnly = prop === 'id' || prop === 'type' || isNameReadOnly;
-
-        if (prop === 'visible') {
-          return ( 
-            <td key={prop} className="p-2 text-center align-top"> 
-                <input 
-                    type="checkbox" 
-                    checked={!!value} 
-                    onChange={(e) => onInputChange(category, index, prop, e.target.checked)} 
-                    className="h-5 w-5 rounded mt-1" 
-                /> 
-            </td> 
-          );
-        }
-        
-        let inputType = typeof value === 'number' ? 'number' : 'text';
-        let step = undefined;
-        if (inputType === 'number') { step = prop.includes('diameter') ? 25 : 1; }
-
-        return (
-            <td key={prop} className="p-2 align-top">
-                <input 
-                    type={inputType} 
-                    value={value !== undefined && value !== null ? String(value) : ''} 
-                    readOnly={isReadOnly} 
-                    step={step} 
-                    min={prop.includes('diameter') ? 25 : undefined}
-                    onChange={(e) => {
-                        const val = inputType === 'number' ? parseFloat(e.target.value) : e.target.value;
-                        onInputChange(category, index, prop, isNaN(val as number) && inputType === 'number' ? 0 : val);
-                    }}
-                    className={`w-full p-1 border rounded min-w-[80px] ${isReadOnly ? 'bg-gray-100' : ''}`}
-                />
-            </td>
-        );
-    }
-
-    return (
-        <div className="mb-8">
-            <h3 className="text-xl font-semibold mb-3 border-b pb-2">{category}</h3>
-            <div className="overflow-x-auto">
-                <table className="w-full text-left table-auto border-collapse">
-                    <thead><tr>
-                        {headers.map(header => ( <th key={header} className="p-2 text-sm font-semibold capitalize border-b-2">{headerLabelMap[header] || header}</th> ))}
-                        <th className="p-2 text-sm font-semibold border-b-2">削除</th>
-                    </tr></thead>
-                    <tbody>{items.map((item, index) => (
-                        <tr key={item.id} className="border-t">
-                            {headers.map(header => renderEditableCell(item, index, header))}
-                            <td className="p-2 align-top">
-                                <button onClick={() => onDeleteRow(category, index)} className="text-red-500 hover:text-red-700 mt-1">
-                                    <Trash2 size={20} />
-                                </button>
-                            </td>
-                        </tr>
-                    ))}</tbody>
-                </table>
-            </div>
-            <button onClick={() => onAddRow(category)} className="mt-2 bg-gray-200 text-gray-700 px-3 py-1 rounded hover:bg-gray-300 text-sm"> <Plus size={16} className="inline-block mr-1" /> 行を追加 </button>
-        </div>
-    );
+// カテゴリごとの設定項目定義
+const PART_TYPES = {
+    [DuctPartType.Straight]: { label: '直管', props: ['diameter', 'length'] },
+    [DuctPartType.Elbow90]: { label: '90°エルボ', props: ['diameter', 'legLength'] },
+    [DuctPartType.AdjustableElbow]: { label: '45°/自由エルボ', props: ['diameter', 'angle', 'legLength'] },
+    [DuctPartType.Reducer]: { label: 'レジューサー', props: ['diameter', 'diameter2', 'length'] },
+    [DuctPartType.TeeReducer]: { label: 'T管', props: ['diameter', 'diameter2', 'diameter3', 'length', 'branchLength'] },
+    [DuctPartType.YBranchReducer]: { label: 'Y管', props: ['diameter', 'diameter2', 'diameter3', 'length', 'branchLength', 'angle'] },
+    [DuctPartType.Damper]: { label: 'ダンパー', props: ['diameter', 'length'] },
+    [DuctPartType.Cap]: { label: 'キャップ', props: ['diameter'] },
 };
 
 const FittingsModal = () => {
   const isOpen = useAtomValue(isFittingsModalOpenAtom);
-  const onClose = useSetAtom(closeFittingsModalAtom);
-  const globalFittings = useAtomValue(fittingsAtom);
-  const setFittings = useSetAtom(setFittingsAtom);
+  const close = useSetAtom(closeFittingsModalAtom);
+  const currentFittings = useAtomValue(fittingsAtom);
   const saveFittings = useSetAtom(saveFittingsAtom);
 
-  const [localFittings, setLocalFittings] = useState<Fittings>({});
-  const scrollableContentRef = useRef<HTMLDivElement>(null);
+  // ローカル編集用ステート
+  const [localFittings, setLocalFittings] = useState(currentFittings);
+  const [activeTab, setActiveTab] = useState<string>(Object.keys(currentFittings)[0] || '90°エルボ');
 
   useEffect(() => {
     if (isOpen) {
-        setLocalFittings(JSON.parse(JSON.stringify(globalFittings)));
+      setLocalFittings(JSON.parse(JSON.stringify(currentFittings)));
     }
-  }, [globalFittings, isOpen]);
-
-  useEffect(() => {
-    const scrollableElement = scrollableContentRef.current;
-    const preventDefaultForBackground = (e: Event) => {
-        if (scrollableElement && e.target instanceof Node && scrollableElement.contains(e.target)) {
-            return;
-        }
-        e.preventDefault();
-    };
-    const preventKeysForBackground = (e: KeyboardEvent) => {
-        if (scrollableElement && e.target instanceof Node && scrollableElement.contains(e.target)) {
-            return;
-        }
-        if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' ', 'PageUp', 'PageDown', 'End', 'Home'].includes(e.key)) {
-            e.preventDefault();
-        }
-    };
-    if (isOpen) {
-      window.addEventListener('wheel', preventDefaultForBackground, { passive: false });
-      window.addEventListener('keydown', preventKeysForBackground, { passive: false });
-    }
-    return () => {
-      window.removeEventListener('wheel', preventDefaultForBackground);
-      window.removeEventListener('keydown', preventKeysForBackground);
-    };
-  }, [isOpen]);
+  }, [isOpen, currentFittings]);
 
   if (!isOpen) return null;
 
-  const handleInputChange = (category: string, index: number, prop: string, value: any) => {
-    setLocalFittings(prevFittings => {
-      const newFittings = { ...prevFittings };
-      const newItems = [...newFittings[category]];
-      const newItem = { ...newItems[index] };
-
-      (newItem as any)[prop] = value;
-
-      if (prop.includes('diameter')) {
-          if (newItem.type === DuctPartType.TeeReducer || newItem.type === DuctPartType.YBranchReducer || newItem.type === DuctPartType.Reducer || newItem.type === DuctPartType.Elbow90 || newItem.type === DuctPartType.AdjustableElbow || newItem.type === DuctPartType.Damper) {
-             newItem.name = generateNameFromDiameters(newItem);
-          }
-      }
-      if (prop === 'diameter' && (newItem.type === DuctPartType.Elbow90 || newItem.type === DuctPartType.AdjustableElbow)) {
-          const diameterVal = typeof value === 'number' ? value : 0;
-          if (newItem.type === DuctPartType.Elbow90) {
-              newItem.legLength = diameterVal;
-          } else if (newItem.angle && newItem.angle !== 90) {
-              if (newItem.angle === 135) {
-                   newItem.legLength = Math.round(diameterVal * 0.4);
-              }
-          }
-      }
-
-      newItems[index] = newItem;
-      newFittings[category] = newItems;
-      return newFittings;
+  const handleInputChange = (category: string, index: number, field: string, value: any) => {
+    setLocalFittings(prev => {
+        const next = { ...prev };
+        const items = [...next[category]];
+        items[index] = { ...items[index], [field]: value };
+        
+        // 名前を自動更新 (任意)
+        if (field.startsWith('diameter')) {
+            const d1 = items[index].diameter;
+            const d2 = (items[index] as any).diameter2;
+            const d3 = (items[index] as any).diameter3;
+            let name = `D${d1}`;
+            if (d2) name += `-${d2}`;
+            if (d3) name += `-${d3}`;
+            items[index].name = name;
+        }
+        
+        next[category] = items;
+        return next;
     });
   };
 
-  const handleAddRow = (category: string) => {
-    const newFittings = { ...localFittings };
-    const items = [...newFittings[category]];
-    
-    // ★★★ 修正点: templateItem に型注釈 Partial<FittingItem> を追加し、diameterの型エラーを回避 ★★★
-    const templateItem: Partial<FittingItem> = items.length > 0 ? items[0] : { type: DuctPartType.Straight };
-    
-    const newItem: FittingItem = {
-        ...(templateItem as FittingItem), // spreadする際にキャスト
-        id: `${category.replace(/[^a-zA-Z0-9]/g, '')}-${Date.now()}`,
-        name: '新規',
-        diameter: templateItem.diameter || 100, // Partial型なので、undefinedの場合は100を使用
-        visible: true,
-        type: templateItem.type || DuctPartType.Straight // typeも確実に設定
-    };
-    newItem.name = generateNameFromDiameters(newItem);
-    if (newItem.type === DuctPartType.Elbow90) newItem.legLength = newItem.diameter;
-    
-    items.push(newItem);
-    newFittings[category] = items;
-    setLocalFittings(newFittings);
+  const handleDelete = (category: string, index: number) => {
+    if(!confirm('この部材設定を削除しますか？')) return;
+    setLocalFittings(prev => {
+        const next = { ...prev };
+        next[category] = prev[category].filter((_, i) => i !== index);
+        return next;
+    });
   };
 
-  const handleDeleteRow = (category: string, index: number) => {
-    const newFittings = { ...localFittings };
-    const items = [...newFittings[category]];
-    items.splice(index, 1);
-    newFittings[category] = items;
-    setLocalFittings(newFittings);
+  const handleAdd = (category: string) => {
+    setLocalFittings(prev => {
+        const next = { ...prev };
+        const items = next[category];
+        if (items.length > 0) {
+            // 最後のアイテムをコピー
+            const newItem = { ...items[items.length - 1], id: `custom-${Date.now()}` };
+            next[category] = [...items, newItem];
+        } else {
+            // 新規作成 (デフォルト値)
+            // ※簡易実装: 既存リストが空の場合の処理は今回は割愛
+        }
+        return next;
+    });
   };
 
-  const handleSaveChanges = () => {
-    setFittings(localFittings);
-    saveFittings();
-    onClose();
+  const handleSave = () => {
+      saveFittings(localFittings);
+      close();
+  };
+
+  const handleReset = () => {
+      if(!confirm('初期設定に戻しますか？すべてのカスタム設定が失われます。')) return;
+      setLocalFittings(getDefaultFittings());
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-2xl p-6 w-full max-w-7xl max-h-[90vh] flex flex-col">
-        <div className="flex justify-between items-center border-b pb-3 mb-4">
-          <h2 className="text-2xl font-bold">継手管理</h2>
-          <button onClick={onClose} className="p-2 rounded-full hover:bg-gray-200">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4">
+      <div className="bg-white rounded-lg shadow-2xl w-full max-w-4xl h-[85vh] flex flex-col">
+        {/* Header */}
+        <div className="flex justify-between items-center p-4 border-b bg-gray-50 rounded-t-lg">
+          <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
+            部材パラメータ設定
+          </h2>
+          <button onClick={close} className="p-2 hover:bg-gray-200 rounded-full text-gray-500">
             <X size={24} />
           </button>
         </div>
-        <div ref={scrollableContentRef} className="flex-1 overflow-y-auto pr-2">
-          {Object.entries(localFittings)
-            .sort(([catA], [catB]) => catA.localeCompare(catB)) 
-            .map(([category, items]) => (
-             <FittingCategoryEditor 
-                key={category} 
-                category={category} 
-                items={items} 
-                onInputChange={handleInputChange}
-                onDeleteRow={handleDeleteRow}
-                onAddRow={handleAddRow}
-             />
-           ))}
+
+        {/* Body */}
+        <div className="flex flex-1 overflow-hidden">
+            {/* Sidebar (Tabs) */}
+            <div className="w-48 bg-gray-50 border-r overflow-y-auto">
+                {Object.keys(localFittings).map(cat => (
+                    <button
+                        key={cat}
+                        onClick={() => setActiveTab(cat)}
+                        className={`w-full text-left px-4 py-3 text-sm font-medium border-l-4 transition-colors ${
+                            activeTab === cat 
+                            ? 'bg-white border-indigo-500 text-indigo-700' 
+                            : 'border-transparent text-gray-600 hover:bg-gray-100'
+                        }`}
+                    >
+                        {cat}
+                    </button>
+                ))}
+            </div>
+
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto p-6 bg-white">
+                <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-lg font-bold text-gray-800">{activeTab}</h3>
+                    <button 
+                        onClick={() => handleAdd(activeTab)}
+                        className="flex items-center gap-1 px-3 py-1.5 bg-indigo-50 text-indigo-600 rounded-md hover:bg-indigo-100 text-sm font-bold"
+                    >
+                        <Plus size={16} /> 追加
+                    </button>
+                </div>
+
+                <table className="w-full text-sm text-left">
+                    <thead className="text-xs text-gray-500 uppercase bg-gray-50 border-b">
+                        <tr>
+                            <th className="px-3 py-2">表示名</th>
+                            <th className="px-3 py-2">口径 (mm)</th>
+                            <th className="px-3 py-2">長さ/他 (mm)</th>
+                            <th className="px-3 py-2 w-10">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                        {localFittings[activeTab]?.map((item, idx) => (
+                            <tr key={item.id} className="hover:bg-gray-50">
+                                <td className="p-2">
+                                    <input 
+                                        type="text" 
+                                        value={item.name}
+                                        onChange={(e) => handleInputChange(activeTab, idx, 'name', e.target.value)}
+                                        className="w-full border-gray-300 rounded text-sm p-1 border"
+                                    />
+                                </td>
+                                <td className="p-2">
+                                    <div className="flex gap-1 items-center">
+                                        <input 
+                                            type="number" 
+                                            value={item.diameter}
+                                            onChange={(e) => handleInputChange(activeTab, idx, 'diameter', Number(e.target.value))}
+                                            className="w-16 border rounded p-1"
+                                            title="主口径"
+                                        />
+                                        {(item as any).diameter2 !== undefined && (
+                                            <>
+                                                <span className="text-gray-400">-</span>
+                                                <input 
+                                                    type="number" 
+                                                    value={(item as any).diameter2}
+                                                    onChange={(e) => handleInputChange(activeTab, idx, 'diameter2', Number(e.target.value))}
+                                                    className="w-16 border rounded p-1"
+                                                    title="第2口径"
+                                                />
+                                            </>
+                                        )}
+                                        {(item as any).diameter3 !== undefined && (
+                                            <>
+                                                <span className="text-gray-400">-</span>
+                                                <input 
+                                                    type="number" 
+                                                    value={(item as any).diameter3}
+                                                    onChange={(e) => handleInputChange(activeTab, idx, 'diameter3', Number(e.target.value))}
+                                                    className="w-16 border rounded p-1"
+                                                    title="第3口径"
+                                                />
+                                            </>
+                                        )}
+                                    </div>
+                                </td>
+                                <td className="p-2">
+                                    <div className="flex gap-2 text-xs text-gray-500 items-center">
+                                        {(item as any).length !== undefined && (
+                                            <div className="flex flex-col">
+                                                <span>L</span>
+                                                <input type="number" value={(item as any).length} onChange={(e) => handleInputChange(activeTab, idx, 'length', Number(e.target.value))} className="w-14 border rounded p-1 text-black" />
+                                            </div>
+                                        )}
+                                        {(item as any).legLength !== undefined && (
+                                            <div className="flex flex-col">
+                                                <span>足長</span>
+                                                <input type="number" value={(item as any).legLength} onChange={(e) => handleInputChange(activeTab, idx, 'legLength', Number(e.target.value))} className="w-14 border rounded p-1 text-black" />
+                                            </div>
+                                        )}
+                                        {(item as any).branchLength !== undefined && (
+                                            <div className="flex flex-col">
+                                                <span>枝長</span>
+                                                <input type="number" value={(item as any).branchLength} onChange={(e) => handleInputChange(activeTab, idx, 'branchLength', Number(e.target.value))} className="w-14 border rounded p-1 text-black" />
+                                            </div>
+                                        )}
+                                        {(item as any).angle !== undefined && (
+                                            <div className="flex flex-col">
+                                                <span>角度</span>
+                                                <input type="number" value={(item as any).angle} onChange={(e) => handleInputChange(activeTab, idx, 'angle', Number(e.target.value))} className="w-14 border rounded p-1 text-black" />
+                                            </div>
+                                        )}
+                                    </div>
+                                </td>
+                                <td className="p-2 text-center">
+                                    <button 
+                                        onClick={() => handleDelete(activeTab, idx)}
+                                        className="text-gray-400 hover:text-red-500 transition-colors"
+                                    >
+                                        <Trash2 size={16} />
+                                    </button>
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
         </div>
-        <div className="mt-4 border-t pt-4 flex justify-end space-x-2">
-          <button onClick={onClose} className="bg-gray-200 text-gray-800 font-semibold py-2 px-4 rounded-md hover:bg-gray-300">
-            キャンセル
+
+        {/* Footer */}
+        <div className="p-4 border-t bg-gray-50 flex justify-between rounded-b-lg">
+          <button 
+            onClick={handleReset}
+            className="flex items-center gap-1 px-4 py-2 text-gray-600 hover:bg-gray-200 rounded text-sm"
+          >
+            <RotateCcw size={16} /> 初期値に戻す
           </button>
-          <button onClick={handleSaveChanges} className="bg-indigo-600 text-white font-semibold py-2 px-6 rounded-md hover:bg-indigo-700 transition-colors">
-            保存
-          </button>
+          
+          <div className="flex gap-3">
+            <button onClick={close} className="px-5 py-2 bg-white border border-gray-300 rounded text-gray-700 hover:bg-gray-50 font-medium">
+                キャンセル
+            </button>
+            <button onClick={handleSave} className="flex items-center gap-2 px-6 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 shadow-md font-bold">
+                <Save size={18} /> 保存して閉じる
+            </button>
+          </div>
         </div>
       </div>
     </div>

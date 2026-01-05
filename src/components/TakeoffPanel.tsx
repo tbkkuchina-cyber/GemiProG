@@ -2,8 +2,8 @@
 
 import { useAtomValue } from 'jotai';
 import { takeoffResultAtom } from '@/lib/jotai-store';
-import { exportToCSV } from '@/lib/file-utils'; // 追加
-import { Calculator, Hammer, ScrollText, FileSpreadsheet } from 'lucide-react';
+import { exportToCSV } from '@/lib/file-utils';
+import { FileSpreadsheet } from 'lucide-react';
 
 const TakeoffPanel = () => {
   const result = useAtomValue(takeoffResultAtom);
@@ -12,69 +12,58 @@ const TakeoffPanel = () => {
 
   if (!hasData) {
     return (
-      <div className="p-4 text-center text-gray-500 text-sm">
-        ダクトを配置すると<br/>積算結果がここに表示されます
+      <div className="p-4 text-center text-gray-400 text-xs bg-gray-50 rounded border border-dashed border-gray-200 mt-2">
+        ダクトを配置すると<br/>積算数量がここに表示されます
       </div>
     );
   }
 
   return (
-    <div className="space-y-4">
-      
-      {/* --- CSVエクスポートボタン (追加) --- */}
-      <button 
-        onClick={() => exportToCSV(result)}
-        className="w-full flex items-center justify-center gap-2 bg-green-600 text-white py-2 px-4 rounded-md hover:bg-green-700 transition-colors text-sm font-bold shadow-sm"
-      >
-        <FileSpreadsheet size={18} />
-        CSV形式で書き出し
-      </button>
-
-      {/* 直管定尺計算 */}
-      <div className="bg-blue-50 p-3 rounded-md border border-blue-100">
-        <h4 className="font-bold text-blue-800 text-sm mb-2 flex items-center">
-          <ScrollText size={16} className="mr-2" />
-          直管 (4m定尺換算)
-        </h4>
-        <ul className="text-sm space-y-1">
+    <div className="space-y-3 mt-2">
+      {/* 1. 直管 */}
+      <div className="bg-white p-2 rounded border border-gray-200 text-xs shadow-sm">
+        <h4 className="font-bold text-gray-600 mb-1 border-b pb-1">直管ダクト (4m)</h4>
+        <ul>
           {Object.entries(result.straightStock).map(([d, count]) => (
-            <li key={d} className="flex justify-between border-b border-blue-100 pb-1 last:border-0">
+            <li key={d} className="flex justify-between py-0.5">
               <span>φ{d}</span>
-              <span className="font-bold">{count} 本</span>
+              <span className="font-mono font-bold">{count} 本</span>
             </li>
           ))}
         </ul>
       </div>
 
-      {/* 副資材集計 */}
-      <div className="bg-amber-50 p-3 rounded-md border border-amber-100">
-        <h4 className="font-bold text-amber-800 text-sm mb-2 flex items-center">
-          <Hammer size={16} className="mr-2" />
-          副資材 (概算)
-        </h4>
-        
-        <div className="mb-3">
-          <p className="text-xs text-amber-700 font-semibold mb-1">フランジ (合計)</p>
-          <ul className="text-sm space-y-1 pl-2">
-            {Object.entries(result.flangeCounts).map(([d, count]) => (
-              <li key={d} className="flex justify-between">
-                <span>φ{d}</span>
-                <span>{count} 枚</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-
-        <div className="flex justify-between text-sm border-t border-amber-200 pt-2">
-          <span>ボルト総数:</span>
-          <span className="font-bold">{result.totalBolts} 個</span>
-        </div>
-        <div className="flex justify-between text-sm pt-1">
-          <span>パッキン:</span>
-          <span className="font-bold">{result.totalGasketLen.toFixed(1)} m</span>
+      {/* 2. フランジ */}
+      <div className="bg-white p-2 rounded border border-gray-200 text-xs shadow-sm">
+        <h4 className="font-bold text-gray-600 mb-1 border-b pb-1">フランジ / 副資材</h4>
+        <ul className="mb-2">
+          {Object.entries(result.flangeCounts).map(([d, count]) => (
+            <li key={d} className="flex justify-between py-0.5">
+              <span>F φ{d}</span>
+              <span className="font-mono">{count} 枚</span>
+            </li>
+          ))}
+        </ul>
+        <div className="border-t border-gray-100 pt-1 text-gray-500">
+           <div className="flex justify-between">
+              <span>ボルト</span>
+              <span className="font-mono">{result.totalBolts} 組</span>
+           </div>
+           <div className="flex justify-between">
+              <span>パッキン</span>
+              <span className="font-mono">{result.totalGasketLen.toFixed(1)} m</span>
+           </div>
         </div>
       </div>
 
+      {/* CSVボタン */}
+      <button 
+        onClick={() => exportToCSV(result)}
+        className="w-full flex items-center justify-center gap-1 bg-green-600 text-white py-1.5 rounded hover:bg-green-700 transition-colors text-xs font-bold"
+      >
+        <FileSpreadsheet size={14} />
+        CSV出力
+      </button>
     </div>
   );
 };

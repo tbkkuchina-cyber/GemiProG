@@ -5,7 +5,10 @@ import dynamic from 'next/dynamic';
 import { useAtom, useSetAtom, useAtomValue } from 'jotai';
 
 // --- すべてのインポートを正しく記述 ---
-import CanvasArea from "@/components/CanvasArea";
+const CanvasArea = dynamic(() => import('@/components/CanvasArea'), { 
+  ssr: false,
+  loading: () => <div className="flex-1 bg-gray-800 flex items-center justify-center text-white">Loading Canvas...</div>
+});
 import ConfirmModal from "@/components/ConfirmModal";
 import ContextMenu from "@/components/ContextMenu";
 import DimensionModal from "@/components/DimensionModal";

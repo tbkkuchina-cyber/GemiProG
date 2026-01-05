@@ -5,7 +5,6 @@ import {
   cameraAtom, 
   modeAtom, 
   selectedObjectIdAtom, // 追加
-  dragStateAtom, // 必要に応じて
   allDimensionsAtom
 } from '@/lib/jotai-store';
 import { 
@@ -53,10 +52,10 @@ export const useCanvas = (canvasRef: RefObject<HTMLCanvasElement>) => {
     drawDimensions(ctx, dimensions, objects, camera);
 
     // 計測ツールの描画 (モードがmeasureの場合など)
-    if (mode === 'measure') {
-      // 計測ツールの描画ロジックが必要ならここに記述
-      // drawMeasureTool(...)
-    }
+    // if (mode === 'measure') {
+    //   // 計測ツールの描画ロジックが必要ならここに記述
+    //   // drawMeasureTool(...)
+    // }
 
     ctx.restore();
 

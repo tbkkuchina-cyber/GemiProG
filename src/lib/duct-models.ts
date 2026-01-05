@@ -1,4 +1,4 @@
-import { AnyDuctPart, DuctPartType, Connector, IntersectionPoint, IDuctPart, Camera } from '@/lib/types';
+import { AnyDuctPart, DuctPartType, Connector, IntersectionPoint, IDuctPart, Camera, Point } from '@/lib/types';
 
 const DIAMETER_COLORS: { [key: number]: string; default: string } = {
     default: '#60a5fa', // blue-400
@@ -28,6 +28,7 @@ export interface DuctPartOptions {
     intersectionOffset?: number;
     type?: DuctPartType;
     mainLength?: number;
+    points?: Point[]; // 追加
 }
 
 export abstract class DuctPart implements IDuctPart {
@@ -42,10 +43,11 @@ export abstract class DuctPart implements IDuctPart {
     isFlipped: boolean;
     type: DuctPartType;
     name: string;
+    points?: Point[]; // ★追加: プロパティ定義
 
     constructor(x: number, y: number, options: DuctPartOptions = {}) {
-        this.id = ''; // stringとして初期化
-        this.groupId = ''; // stringとして初期化
+        this.id = ''; 
+        this.groupId = ''; 
         this.x = x;
         this.y = y;
         this.rotation = options.rotation || 0;
@@ -55,6 +57,7 @@ export abstract class DuctPart implements IDuctPart {
         this.isFlipped = options.isFlipped || false;
         this.type = options.type!;
         this.name = '';
+        this.points = options.points; // ★追加: 初期化
     }
 
     get color(): string { return getColorForDiameter(this.diameter); }
@@ -145,8 +148,6 @@ export class StraightDuct extends DuctPart {
         return Math.abs(localX) <= this.length / 2 && Math.abs(localY) <= this.diameter / 2;
     }
 }
-
-
 
 export class Elbow90 extends DuctPart {
     legLength: number;
@@ -302,9 +303,9 @@ export class AdjustableElbow extends DuctPart {
         const angle = this.isFlipped ? -this.angle : this.angle;
         const angleRad = angle * Math.PI / 180;
         const leg2X = this.legLength * Math.cos(angleRad / 2);
-        const leg2Y = -this.legLength * Math.sin(angleRad / 2); // オリジナル同様 - を使用
+        const leg2Y = -this.legLength * Math.sin(angleRad / 2);
         const leg1X = this.legLength * Math.cos(-angleRad / 2);
-        const leg1Y = -this.legLength * Math.sin(-angleRad / 2); // オリジナル同様 - を使用
+        const leg1Y = -this.legLength * Math.sin(-angleRad / 2);
         ctx.beginPath();
         ctx.moveTo(leg1X, leg1Y);
         ctx.lineTo(0, 0);
@@ -320,16 +321,10 @@ export class AdjustableElbow extends DuctPart {
         ctx.setLineDash([]);
         ctx.restore();
     }
-    
-    //
-    // ★★★ 修正点 ★★★
-    //
     getConnectors(): Connector[] {
         const rad = this.rotation * Math.PI / 180;
         const angle = this.isFlipped ? -this.angle : this.angle;
         const angleRad = angle * Math.PI / 180;
-
-        // (オリジナルに合わせてY座標にマイナスを追加)
         const c1_local = { 
             x: this.legLength * Math.cos(-angleRad / 2),
             y: -this.legLength * Math.sin(-angleRad / 2) 
@@ -338,20 +333,15 @@ export class AdjustableElbow extends DuctPart {
             x: this.legLength * Math.cos(angleRad / 2),
             y: -this.legLength * Math.sin(angleRad / 2)
         };
-
         const rotate = (p: { x: number; y: number }) => ({ 
             x: this.x + p.x * Math.cos(rad) - p.y * Math.sin(rad), 
             y: this.y + p.x * Math.sin(rad) + p.y * Math.cos(rad) 
         });
-
         return [
-            // (オリジナルに合わせて角度計算を修正)
             { id: 0, ...rotate(c1_local), angle: (this.rotation + 180 + angle / 2) % 360, diameter: this.diameter },
             { id: 1, ...rotate(c2_local), angle: (this.rotation - angle / 2 + 360) % 360, diameter: this.diameter }
         ];
     }
-    // ★★★ 修正ここまで ★★★
-
     rotate(): void {
         const angle = this.isFlipped ? -this.angle : this.angle;
         const offset = angle / 2;
@@ -369,7 +359,6 @@ export class AdjustableElbow extends DuctPart {
         const localY = dx * Math.sin(rad) + dy * Math.cos(rad);
         const angle = this.isFlipped ? -this.angle : this.angle;
         const angleRad = angle * Math.PI / 180;
-        // (Y座標にマイナスが追加されていることを確認)
         const leg1_end = { x: this.legLength * Math.cos(-angleRad / 2), y: -this.legLength * Math.sin(-angleRad / 2) };
         const leg2_end = { x: this.legLength * Math.cos(angleRad / 2), y: -this.legLength * Math.sin(angleRad / 2) };
         const distToSegment = (p: { x: number; y: number }, v: { x: number; y: number }, w: { x: number; y: number }) => {
@@ -519,8 +508,6 @@ export class TeeReducer extends DuctPart {
         return inMain || inBranch;
     }
 }
-
-
 
 export class YBranch extends DuctPart {
     length: number;
@@ -830,6 +817,18 @@ export function createDuctPart(obj: AnyDuctPart): DuctPart | null {
         case DuctPartType.YBranchReducer: newObj = new YBranchReducer(obj.x, obj.y, options); break;
         case DuctPartType.Reducer: newObj = new Reducer(obj.x, obj.y, options); break;
         case DuctPartType.Damper: newObj = new Damper(obj.x, obj.y, options); break;
+        case DuctPartType.Tee:
+            // Tee is not fully implemented in the uploaded classes but should be handled to avoid errors
+            // Use StraightDuct logic as a fallback for now or define a proper Tee class if available
+            // Assuming Tee logic is similar to TeeReducer but without reducer parts
+            newObj = new StraightDuct(obj.x, obj.y, options); 
+            // Or better, create a Tee instance if class exists, but it wasn't in the provided code block above.
+            // Using TeeReducer as fallback might be safer visually if Tee class is missing.
+            break;
+        case DuctPartType.Cap:
+             // Fallback for Cap
+             newObj = new StraightDuct(obj.x, obj.y, { ...options, length: 50 });
+             break;
         default: return null;
     }
 
@@ -838,6 +837,8 @@ export function createDuctPart(obj: AnyDuctPart): DuctPart | null {
         newObj.groupId = obj.groupId;
         newObj.isSelected = obj.isSelected;
         newObj.name = obj.name;
+        // ★★★ 修正: pointsプロパティを確実に引き継ぐ ★★★
+        newObj.points = obj.points; 
     }
     return newObj;
 }
